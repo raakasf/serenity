@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -17,6 +17,7 @@ namespace JS::Intl {
 
 class PluralRules final : public NumberFormatBase {
     JS_OBJECT(PluralRules, NumberFormatBase);
+    JS_DECLARE_ALLOCATOR(PluralRules);
 
 public:
     virtual ~PluralRules() override = default;
@@ -31,10 +32,15 @@ private:
     ::Locale::PluralForm m_type { ::Locale::PluralForm::Cardinal }; // [[Type]]
 };
 
-::Locale::PluralOperands get_operands(String const& string);
+struct ResolvedPlurality {
+    ::Locale::PluralCategory plural_category; // [[PluralCategory]]
+    String formatted_string;                  // [[FormattedString]]
+};
+
+::Locale::PluralOperands get_operands(StringView string);
 ::Locale::PluralCategory plural_rule_select(StringView locale, ::Locale::PluralForm type, Value number, ::Locale::PluralOperands operands);
-::Locale::PluralCategory resolve_plural(PluralRules const&, Value number);
-::Locale::PluralCategory resolve_plural(NumberFormatBase const& number_format, ::Locale::PluralForm type, Value number);
+ResolvedPlurality resolve_plural(PluralRules const&, Value number);
+ResolvedPlurality resolve_plural(NumberFormatBase const& number_format, ::Locale::PluralForm type, Value number);
 ::Locale::PluralCategory plural_rule_select_range(StringView locale, ::Locale::PluralForm, ::Locale::PluralCategory start, ::Locale::PluralCategory end);
 ThrowCompletionOr<::Locale::PluralCategory> resolve_plural_range(VM&, PluralRules const&, Value start, Value end);
 

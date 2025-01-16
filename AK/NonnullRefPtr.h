@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,15 +9,12 @@
 #define NONNULLREFPTR_SCRUB_BYTE 0xe1
 
 #include <AK/Assertions.h>
-#include <AK/Atomic.h>
 #include <AK/Format.h>
 #include <AK/Traits.h>
 #include <AK/Types.h>
 
 namespace AK {
 
-template<typename T>
-class OwnPtr;
 template<typename T>
 class RefPtr;
 
@@ -56,7 +53,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(U const& object) requires(IsConvertible<U*, T*>)
+    requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(U const& object)
         : m_ptr(const_cast<T*>(static_cast<T const*>(&object)))
     {
         m_ptr->ref();
@@ -73,7 +71,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U>&& other) requires(IsConvertible<U*, T*>)
+    requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U>&& other)
         : m_ptr(static_cast<T*>(&other.leak_ref()))
     {
     }
@@ -85,7 +84,8 @@ public:
     }
 
     template<typename U>
-    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U> const& other) requires(IsConvertible<U*, T*>)
+    requires(IsConvertible<U*, T*>)
+    ALWAYS_INLINE NonnullRefPtr(NonnullRefPtr<U> const& other)
         : m_ptr(const_cast<T*>(static_cast<T const*>(other.ptr())))
     {
         m_ptr->ref();
@@ -93,8 +93,8 @@ public:
 
     ALWAYS_INLINE ~NonnullRefPtr()
     {
-        unref_if_not_null(m_ptr);
-        m_ptr = nullptr;
+        auto* ptr = exchange(m_ptr, nullptr);
+        unref_if_not_null(ptr);
 #ifdef SANITIZE_PTRS
         m_ptr = reinterpret_cast<T*>(explode_byte(NONNULLREFPTR_SCRUB_BYTE));
 #endif
@@ -120,7 +120,8 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr& operator=(NonnullRefPtr<U> const& other) requires(IsConvertible<U*, T*>)
+    requires(IsConvertible<U*, T*>)
+    NonnullRefPtr& operator=(NonnullRefPtr<U> const& other)
     {
         NonnullRefPtr tmp { other };
         swap(tmp);
@@ -135,7 +136,8 @@ public:
     }
 
     template<typename U>
-    NonnullRefPtr& operator=(NonnullRefPtr<U>&& other) requires(IsConvertible<U*, T*>)
+    requires(IsConvertible<U*, T*>)
+    NonnullRefPtr& operator=(NonnullRefPtr<U>&& other)
     {
         NonnullRefPtr tmp { move(other) };
         swap(tmp);
@@ -156,47 +158,27 @@ public:
         return *ptr;
     }
 
-    ALWAYS_INLINE RETURNS_NONNULL T* ptr()
-    {
-        return as_nonnull_ptr();
-    }
-    ALWAYS_INLINE RETURNS_NONNULL T const* ptr() const
+    ALWAYS_INLINE RETURNS_NONNULL T* ptr() const
     {
         return as_nonnull_ptr();
     }
 
-    ALWAYS_INLINE RETURNS_NONNULL T* operator->()
-    {
-        return as_nonnull_ptr();
-    }
-    ALWAYS_INLINE RETURNS_NONNULL T const* operator->() const
+    ALWAYS_INLINE RETURNS_NONNULL T* operator->() const
     {
         return as_nonnull_ptr();
     }
 
-    ALWAYS_INLINE T& operator*()
-    {
-        return *as_nonnull_ptr();
-    }
-    ALWAYS_INLINE T const& operator*() const
+    ALWAYS_INLINE T& operator*() const
     {
         return *as_nonnull_ptr();
     }
 
-    ALWAYS_INLINE RETURNS_NONNULL operator T*()
-    {
-        return as_nonnull_ptr();
-    }
-    ALWAYS_INLINE RETURNS_NONNULL operator T const*() const
+    ALWAYS_INLINE RETURNS_NONNULL operator T*() const
     {
         return as_nonnull_ptr();
     }
 
-    ALWAYS_INLINE operator T&()
-    {
-        return *as_nonnull_ptr();
-    }
-    ALWAYS_INLINE operator T const&() const
+    ALWAYS_INLINE operator T&() const
     {
         return *as_nonnull_ptr();
     }
@@ -210,21 +192,23 @@ public:
     }
 
     template<typename U>
-    void swap(NonnullRefPtr<U>& other) requires(IsConvertible<U*, T*>)
+    void swap(NonnullRefPtr<U>& other)
+    requires(IsConvertible<U*, T*>)
     {
         AK::swap(m_ptr, other.m_ptr);
     }
 
     bool operator==(NonnullRefPtr const& other) const { return m_ptr == other.m_ptr; }
-    bool operator!=(NonnullRefPtr const& other) const { return m_ptr != other.m_ptr; }
 
-    bool operator==(NonnullRefPtr& other) { return m_ptr == other.m_ptr; }
-    bool operator!=(NonnullRefPtr& other) { return m_ptr != other.m_ptr; }
+    template<typename RawPtr>
+    requires(IsPointer<RawPtr>)
+    bool operator==(RawPtr other) const
+    {
+        return m_ptr == other;
+    }
 
-    // clang-format off
 private:
     NonnullRefPtr() = delete;
-    // clang-format on
 
     ALWAYS_INLINE RETURNS_NONNULL T* as_nonnull_ptr() const
     {
@@ -241,7 +225,40 @@ inline NonnullRefPtr<T> adopt_ref(T& object)
     return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, object);
 }
 
+// Use like `adopt_nonnull_ref_or_enomem(new (nothrow) T(args...))`.
 template<typename T>
+inline ErrorOr<NonnullRefPtr<T>> adopt_nonnull_ref_or_enomem(T* object)
+{
+    if (!object)
+        return Error::from_errno(ENOMEM);
+    return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *object);
+}
+
+template<typename T, class... Args>
+requires(IsConstructible<T, Args...>) inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
+{
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T(forward<Args>(args)...));
+}
+
+#ifdef AK_COMPILER_APPLE_CLANG
+// FIXME: Remove once P0960R3 is available in Apple Clang.
+template<typename T, class... Args>
+inline ErrorOr<NonnullRefPtr<T>> try_make_ref_counted(Args&&... args)
+{
+    return adopt_nonnull_ref_or_enomem(new (nothrow) T { forward<Args>(args)... });
+}
+#endif
+
+template<Formattable T>
+struct Formatter<NonnullRefPtr<T>> : Formatter<T> {
+    ErrorOr<void> format(FormatBuilder& builder, NonnullRefPtr<T> const& value)
+    {
+        return Formatter<T>::format(builder, *value);
+    }
+};
+
+template<typename T>
+requires(!HasFormatter<T>)
 struct Formatter<NonnullRefPtr<T>> : Formatter<T const*> {
     ErrorOr<void> format(FormatBuilder& builder, NonnullRefPtr<T> const& value)
     {
@@ -250,7 +267,8 @@ struct Formatter<NonnullRefPtr<T>> : Formatter<T const*> {
 };
 
 template<typename T, typename U>
-inline void swap(NonnullRefPtr<T>& a, NonnullRefPtr<U>& b) requires(IsConvertible<U*, T*>)
+requires(IsConvertible<U*, T*>)
+inline void swap(NonnullRefPtr<T>& a, NonnullRefPtr<U>& b)
 {
     a.swap(b);
 }
@@ -261,22 +279,29 @@ requires(IsConstructible<T, Args...>) inline NonnullRefPtr<T> make_ref_counted(A
     return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *new T(forward<Args>(args)...));
 }
 
-// FIXME: Remove once P0960R3 is available in Clang.
+#ifdef AK_COMPILER_APPLE_CLANG
+// FIXME: Remove once P0960R3 is available in Apple Clang.
 template<typename T, class... Args>
 inline NonnullRefPtr<T> make_ref_counted(Args&&... args)
 {
     return NonnullRefPtr<T>(NonnullRefPtr<T>::Adopt, *new T { forward<Args>(args)... });
 }
-}
+#endif
 
 template<typename T>
-struct Traits<NonnullRefPtr<T>> : public GenericTraits<NonnullRefPtr<T>> {
+struct Traits<NonnullRefPtr<T>> : public DefaultTraits<NonnullRefPtr<T>> {
     using PeekType = T*;
     using ConstPeekType = T const*;
     static unsigned hash(NonnullRefPtr<T> const& p) { return ptr_hash(p.ptr()); }
     static bool equals(NonnullRefPtr<T> const& a, NonnullRefPtr<T> const& b) { return a.ptr() == b.ptr(); }
 };
 
+}
+
+#if USING_AK_GLOBALLY
+using AK::adopt_nonnull_ref_or_enomem;
 using AK::adopt_ref;
 using AK::make_ref_counted;
 using AK::NonnullRefPtr;
+using AK::try_make_ref_counted;
+#endif

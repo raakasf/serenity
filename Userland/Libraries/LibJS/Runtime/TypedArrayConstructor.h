@@ -12,6 +12,7 @@ namespace JS {
 
 class TypedArrayConstructor : public NativeFunction {
     JS_OBJECT(TypedArrayConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(TypedArrayConstructor);
 
 public:
     explicit TypedArrayConstructor(Realm&);
@@ -19,10 +20,10 @@ public:
     virtual ~TypedArrayConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 protected:
-    TypedArrayConstructor(FlyString const& name, Object& prototype);
+    TypedArrayConstructor(DeprecatedFlyString const& name, Object& prototype);
 
 private:
     virtual bool has_constructor() const override { return true; }

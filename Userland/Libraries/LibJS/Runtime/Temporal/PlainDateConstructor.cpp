@@ -14,15 +14,17 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(PlainDateConstructor);
+
 // 3.1 The Temporal.PlainDate Constructor, https://tc39.es/proposal-temporal/#sec-temporal-plaindate-constructor
 PlainDateConstructor::PlainDateConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.PlainDate.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.PlainDate.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void PlainDateConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -46,18 +48,18 @@ ThrowCompletionOr<Value> PlainDateConstructor::call()
 }
 
 // 3.1.1 Temporal.PlainDate ( isoYear, isoMonth, isoDay [ , calendarLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.plaindate
-ThrowCompletionOr<Object*> PlainDateConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> PlainDateConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
-    // 2. Let y be ? ToIntegerThrowOnInfinity(isoYear).
-    auto y = TRY(to_integer_throw_on_infinity(vm, vm.argument(0), ErrorType::TemporalInvalidPlainDate));
+    // 2. Let y be ? ToIntegerWithTruncation(isoYear).
+    auto y = TRY(to_integer_with_truncation(vm, vm.argument(0), ErrorType::TemporalInvalidPlainDate));
 
-    // 3. Let m be ? ToIntegerThrowOnInfinity(isoMonth).
-    auto m = TRY(to_integer_throw_on_infinity(vm, vm.argument(1), ErrorType::TemporalInvalidPlainDate));
+    // 3. Let m be ? ToIntegerWithTruncation(isoMonth).
+    auto m = TRY(to_integer_with_truncation(vm, vm.argument(1), ErrorType::TemporalInvalidPlainDate));
 
-    // 4. Let d be ? ToIntegerThrowOnInfinity(isoDay).
-    auto d = TRY(to_integer_throw_on_infinity(vm, vm.argument(2), ErrorType::TemporalInvalidPlainDate));
+    // 4. Let d be ? ToIntegerWithTruncation(isoDay).
+    auto d = TRY(to_integer_with_truncation(vm, vm.argument(2), ErrorType::TemporalInvalidPlainDate));
 
     // 5. Let calendar be ? ToTemporalCalendarWithISODefault(calendarLike).
     auto* calendar = TRY(to_temporal_calendar_with_iso_default(vm, vm.argument(3)));
@@ -69,7 +71,7 @@ ThrowCompletionOr<Object*> PlainDateConstructor::construct(FunctionObject& new_t
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidPlainDate);
 
     // 6. Return ? CreateTemporalDate(y, m, d, calendar, NewTarget).
-    return TRY(create_temporal_date(vm, y, m, d, *calendar, &new_target));
+    return *TRY(create_temporal_date(vm, y, m, d, *calendar, &new_target));
 }
 
 // 3.2.2 Temporal.PlainDate.from ( item [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.plaindate.from

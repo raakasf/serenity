@@ -5,6 +5,7 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGRectElementPrototype.h>
 #include <LibWeb/SVG/AttributeNames.h>
 #include <LibWeb/SVG/AttributeParser.h>
 #include <LibWeb/SVG/SVGAnimatedLength.h>
@@ -13,42 +14,40 @@
 
 namespace Web::SVG {
 
+JS_DEFINE_ALLOCATOR(SVGRectElement);
+
 SVGRectElement::SVGRectElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGGeometryElement(document, qualified_name)
 {
-    set_prototype(&Bindings::cached_web_prototype(realm(), "SVGRectElement"));
 }
 
-void SVGRectElement::parse_attribute(FlyString const& name, String const& value)
+void SVGRectElement::initialize(JS::Realm& realm)
 {
-    SVGGeometryElement::parse_attribute(name, value);
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGRectElement);
+}
+
+void SVGRectElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value)
+{
+    SVGGeometryElement::attribute_changed(name, old_value, value);
 
     if (name == SVG::AttributeNames::x) {
-        m_x = AttributeParser::parse_coordinate(value);
-        m_path.clear();
+        m_x = AttributeParser::parse_coordinate(value.value_or(String {}));
     } else if (name == SVG::AttributeNames::y) {
-        m_y = AttributeParser::parse_coordinate(value);
-        m_path.clear();
+        m_y = AttributeParser::parse_coordinate(value.value_or(String {}));
     } else if (name == SVG::AttributeNames::width) {
-        m_width = AttributeParser::parse_positive_length(value);
-        m_path.clear();
+        m_width = AttributeParser::parse_positive_length(value.value_or(String {}));
     } else if (name == SVG::AttributeNames::height) {
-        m_height = AttributeParser::parse_positive_length(value);
-        m_path.clear();
+        m_height = AttributeParser::parse_positive_length(value.value_or(String {}));
     } else if (name == SVG::AttributeNames::rx) {
-        m_radius_x = AttributeParser::parse_length(value);
-        m_path.clear();
+        m_radius_x = AttributeParser::parse_length(value.value_or(String {}));
     } else if (name == SVG::AttributeNames::ry) {
-        m_radius_y = AttributeParser::parse_length(value);
-        m_path.clear();
+        m_radius_y = AttributeParser::parse_length(value.value_or(String {}));
     }
 }
 
-Gfx::Path& SVGRectElement::get_path()
+Gfx::Path SVGRectElement::get_path(CSSPixelSize)
 {
-    if (m_path.has_value())
-        return m_path.value();
-
     float width = m_width.value_or(0);
     float height = m_height.value_or(0);
     float x = m_x.value_or(0);
@@ -56,14 +55,12 @@ Gfx::Path& SVGRectElement::get_path()
 
     Gfx::Path path;
     // If width or height is zero, rendering is disabled.
-    if (width == 0 && height == 0) {
-        m_path = move(path);
-        return m_path.value();
-    }
+    if (width == 0 || height == 0)
+        return path;
 
     auto corner_radii = calculate_used_corner_radius_values();
-    float rx = corner_radii.x();
-    float ry = corner_radii.y();
+    float rx = corner_radii.width();
+    float ry = corner_radii.height();
 
     // 1. perform an absolute moveto operation to location (x+rx,y);
     path.move_to({ x + rx, y });
@@ -109,11 +106,14 @@ Gfx::Path& SVGRectElement::get_path()
     if (rx > 0 && ry > 0)
         path.elliptical_arc_to({ x + rx, y }, corner_radii, x_axis_rotation, large_arc_flag, sweep_flag);
 
-    m_path = move(path);
-    return m_path.value();
+    // Spec bug: the path needs to be closed independent of if rx and ry are greater than zero,
+    // https://github.com/w3c/svgwg/issues/753#issuecomment-567199686
+    path.close();
+
+    return path;
 }
 
-Gfx::FloatPoint SVGRectElement::calculate_used_corner_radius_values()
+Gfx::FloatSize SVGRectElement::calculate_used_corner_radius_values() const
 {
     // 1. Let rx and ry be length values.
     float rx = 0;
@@ -125,12 +125,12 @@ Gfx::FloatPoint SVGRectElement::calculate_used_corner_radius_values()
         ry = 0;
     }
     // 3. Otherwise, if a properly specified value is provided for ‘rx’, but not for ‘ry’, then set both rx and ry to the value of ‘rx’.
-    else if (m_radius_x.has_value()) {
+    else if (m_radius_x.has_value() && !m_radius_y.has_value()) {
         rx = m_radius_x.value();
         ry = m_radius_x.value();
     }
     // 4. Otherwise, if a properly specified value is provided for ‘ry’, but not for ‘rx’, then set both rx and ry to the value of ‘ry’.
-    else if (m_radius_y.has_value()) {
+    else if (m_radius_y.has_value() && !m_radius_x.has_value()) {
         rx = m_radius_y.value();
         ry = m_radius_y.value();
     }
@@ -151,7 +151,7 @@ Gfx::FloatPoint SVGRectElement::calculate_used_corner_radius_values()
         ry = half_height;
 
     // 8. The effective values of ‘rx’ and ‘ry’ are rx and ry, respectively.
-    return Gfx::FloatPoint { rx, ry };
+    return { rx, ry };
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#RectElementXAttribute

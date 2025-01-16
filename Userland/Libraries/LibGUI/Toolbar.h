@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/Widget.h>
@@ -18,9 +17,6 @@ class Toolbar : public Widget {
     C_OBJECT(Toolbar)
 public:
     virtual ~Toolbar() override = default;
-
-    ErrorOr<NonnullRefPtr<GUI::Button>> try_add_action(GUI::Action&);
-    ErrorOr<void> try_add_separator();
 
     GUI::Button& add_action(GUI::Action&);
     void add_separator();
@@ -53,11 +49,11 @@ private:
         RefPtr<Action> action;
         RefPtr<Widget> widget;
     };
-    NonnullOwnPtrVector<Item> m_items;
+    Vector<NonnullOwnPtr<Item>> m_items;
     RefPtr<Menu> m_overflow_menu;
     RefPtr<Action> m_overflow_action;
     RefPtr<Button> m_overflow_button;
-    const Gfx::Orientation m_orientation;
+    Gfx::Orientation const m_orientation;
     int m_button_size { 24 };
     bool m_collapsible { false };
     bool m_grouped { false };

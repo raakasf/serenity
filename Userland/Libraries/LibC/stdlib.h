@@ -6,8 +6,14 @@
 
 #pragma once
 
-#include <bits/wchar.h>
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/stdlib.h.html
+#include <limits.h>
+#include <math.h>
 #include <stddef.h>
+#include <sys/wait.h>
+
+#include <bits/wchar.h>
 #include <sys/cdefs.h>
 #include <sys/types.h>
 
@@ -28,10 +34,10 @@ __attribute__((alloc_size(2))) void* realloc(void* ptr, size_t);
 char* getenv(char const* name);
 char* secure_getenv(char const* name);
 int putenv(char*);
+int serenity_putenv(char const* new_var, size_t length);
 int unsetenv(char const*);
 int clearenv(void);
 int setenv(char const* name, char const* value, int overwrite);
-int serenity_setenv(char const* name, ssize_t name_length, char const* value, ssize_t value_length, int overwrite);
 char const* getprogname(void);
 void setprogname(char const*);
 int atoi(char const*);
@@ -72,6 +78,8 @@ __attribute__((noreturn)) void _Exit(int status);
 #define RAND_MAX 32767
 int rand(void);
 void srand(unsigned seed);
+double drand48(void);
+void srand48(long seed);
 
 long int random(void);
 void srandom(unsigned seed);

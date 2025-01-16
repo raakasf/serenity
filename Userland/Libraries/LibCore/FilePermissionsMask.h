@@ -8,7 +8,6 @@
 
 #include <AK/Error.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
 #include <sys/stat.h>
 
 namespace Core {

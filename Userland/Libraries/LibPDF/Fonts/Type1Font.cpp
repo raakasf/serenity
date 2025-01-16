@@ -5,128 +5,145 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGfx/AntiAliasingPainter.h>
+#include <LibGfx/Painter.h>
 #include <LibPDF/CommonNames.h>
+#include <LibPDF/Fonts/CFF.h>
+#include <LibPDF/Fonts/PS1FontProgram.h>
 #include <LibPDF/Fonts/Type1Font.h>
+#include <LibPDF/Renderer.h>
 
 namespace PDF {
 
-static bool is_standard_latin_font(FlyString const& font)
+PDFErrorOr<void> Type1Font::initialize(Document* document, NonnullRefPtr<DictObject> const& dict, float font_size)
 {
-    return font.is_one_of(
-        "Times-Roman",
-        "Helvetica",
-        "Courier",
-        "Times-Bold",
-        "Helvetica-Bold",
-        "Courier-Bold",
-        "Times-Italic",
-        "Helvetica-Oblique",
-        "Courier-Oblique",
-        "Times-BoldItalic",
-        "Helvetica-BoldOblique",
-        "Courier-BoldOblique");
-}
+    TRY(SimpleFont::initialize(document, dict, font_size));
 
-PDFErrorOr<Type1Font::Data> Type1Font::parse_data(Document* document, NonnullRefPtr<DictObject> dict)
-{
-    // FIXME: "Required except for the standard 14 fonts"...
-    //        "Beginning with PDF 1.5, the special treatment given to the standard 14
-    //        fonts is deprecated. [...] For backwards capability, conforming readers
-    //        shall still provide the special treatment identifier for the standard
-    //        14 fonts."
+    m_base_font_name = TRY(dict->get_name(document, CommonNames::BaseFont))->name();
 
-    RefPtr<Encoding> encoding;
+    // auto is_standard_font = is_standard_latin_font(font->base_font_name());
 
-    if (dict->contains(CommonNames::Encoding)) {
-        auto encoding_object = MUST(dict->get_object(document, CommonNames::Encoding));
-        encoding = TRY(Encoding::from_object(document, encoding_object));
-    } else {
-        auto base_font = MUST(dict->get_name(document, CommonNames::BaseFont))->name();
-        if (is_standard_latin_font(base_font)) {
-            // FIXME: The spec doesn't specify what the encoding should be in this case
-            encoding = Encoding::standard_encoding();
+    // If there's an embedded font program we use that; otherwise we try to find a replacement font
+    if (dict->contains(CommonNames::FontDescriptor)) {
+        auto descriptor = TRY(dict->get_dict(document, CommonNames::FontDescriptor));
+        if (descriptor->contains(CommonNames::FontFile3)) {
+            auto font_file_stream = TRY(descriptor->get_stream(document, CommonNames::FontFile3));
+            auto font_file_dict = font_file_stream->dict();
+            if (font_file_dict->contains(CommonNames::Subtype) && font_file_dict->get_name(CommonNames::Subtype)->name() == CommonNames::Type1C) {
+                m_font_program = TRY(CFF::create(font_file_stream->bytes(), encoding()));
+            }
+        } else if (descriptor->contains(CommonNames::FontFile)) {
+            auto font_file_stream = TRY(descriptor->get_stream(document, CommonNames::FontFile));
+            auto font_file_dict = font_file_stream->dict();
+
+            if (!font_file_dict->contains(CommonNames::Length1, CommonNames::Length2))
+                return Error::parse_error("Embedded type 1 font is incomplete"sv);
+
+            auto length1 = TRY(document->resolve(font_file_dict->get_value(CommonNames::Length1))).get<int>();
+            auto length2 = TRY(document->resolve(font_file_dict->get_value(CommonNames::Length2))).get<int>();
+
+            m_font_program = TRY(PS1FontProgram::create(font_file_stream->bytes(), encoding(), length1, length2));
         }
-        // Otherwise, use the built-in encoding of the font program.
     }
 
-    RefPtr<StreamObject> to_unicode;
-    if (dict->contains(CommonNames::ToUnicode))
-        to_unicode = MUST(dict->get_stream(document, CommonNames::ToUnicode));
+    if (m_font_program && m_font_program->kind() == Type1FontProgram::Kind::CIDKeyed)
+        return Error::parse_error("Type1 fonts must not be CID-keyed"sv);
 
-    auto first_char = dict->get_value(CommonNames::FirstChar).get<int>();
-    auto last_char = dict->get_value(CommonNames::LastChar).get<int>();
-    auto widths_array = MUST(dict->get_array(document, CommonNames::Widths));
+    if (!m_font_program) {
+        // NOTE: We use this both for the 14 built-in fonts and for replacement fonts.
+        // We should probably separate these two cases.
+        auto font = TRY(replacement_for(base_font_name().to_lowercase(), font_size));
 
-    VERIFY(widths_array->size() == static_cast<size_t>(last_char - first_char + 1));
+        auto effective_encoding = encoding();
+        bool is_standard_14_font = base_font_name() == "Helvetica" || base_font_name() == "Helvetica-Bold" || base_font_name() == "Helvetica-Oblique" || base_font_name() == "Helvetica-BoldOblique"
+            || base_font_name() == "Times-Roman" || base_font_name() == "Times-Bold" || base_font_name() == "Times-Italic" || base_font_name() == "Times-BoldItalic"
+            || base_font_name() == "Courier" || base_font_name() == "Courier-Bold" || base_font_name() == "Courier-Oblique" || base_font_name() == "Courier-BoldOblique"
+            || base_font_name() == "Symbol" || base_font_name() == "ZapfDingbats";
+        if (!effective_encoding) {
+            // PDF 1.7 spec, APPENDIX D Character Sets and Encodings
+            // "Sections D.4, “Symbol Set and Encoding,” and D.5, “ZapfDingbats Set and Encoding,”
+            //  describe the character sets and built-in encodings for the Symbol and ZapfDingbats (ITC Zapf Dingbats)
+            //  font programs, which are among the standard 14 predefined fonts. These fonts have built-in encodings
+            //  that are unique to each font. (The characters for ZapfDingbats are ordered by code instead of by name,
+            //  since the names in that font are meaningless.)"
+            // FIXME: We use Liberation Sans for both Symbol and ZapfDingbats. It doesn't have all Symbol
+            //        characters, or at least not under the codepoints used in AdobeGlpyhList. It doesn't
+            //        have most of the ZapfDingbats characters. Not sure what to do about this -- we might need a different font.
+            //        (For Helvetica / Times / Courier, the Liberation family also doesn't have the right metrics.)
+            if (base_font_name() == "Symbol"sv)
+                effective_encoding = Encoding::symbol_encoding();
+            else if (base_font_name() == "ZapfDingbats"sv)
+                effective_encoding = Encoding::zapf_encoding();
+            else
+                effective_encoding = Encoding::standard_encoding();
+        }
 
-    HashMap<u16, u16> widths;
-    for (size_t i = 0; i < widths_array->size(); i++)
-        widths.set(first_char + i, widths_array->at(i).to_int());
+        if (is_standard_14_font) {
+            // We use the Liberation fonts as a replacement for the standard 14 fonts, and they're all non-symbolic.
+            m_flags = (m_flags | NonSymbolic) & ~Symbolic;
 
-    u16 missing_width = 0;
-    auto descriptor = MUST(dict->get_dict(document, CommonNames::FontDescriptor));
-    if (descriptor->contains(CommonNames::MissingWidth))
-        missing_width = descriptor->get_value(CommonNames::MissingWidth).to_int();
-    if (!descriptor->contains(CommonNames::FontFile))
-        return Type1Font::Data { {}, to_unicode, encoding.release_nonnull(), move(widths), missing_width, true };
+            // FIXME: Set more m_flags bits (symbolic/nonsymbolic, italic, bold, fixed pitch, serif).
+        }
 
-    auto font_file_stream = TRY(descriptor->get_stream(document, CommonNames::FontFile));
-    auto font_file_dict = font_file_stream->dict();
+        m_fallback_font_painter = TrueTypePainter::create(document, dict, *this, *font, *effective_encoding, base_font_name() == "ZapfDingbats"sv);
+    }
 
-    if (!font_file_dict->contains(CommonNames::Length1, CommonNames::Length2))
-        return Error { Error::Type::Parse, "Embedded type 1 font is incomplete" };
-
-    auto length1 = font_file_dict->get_value(CommonNames::Length1).get<int>();
-    auto length2 = font_file_dict->get_value(CommonNames::Length2).get<int>();
-
-    auto font_program = adopt_ref(*new PS1FontProgram());
-    TRY(font_program->parse(font_file_stream->bytes(), length1, length2));
-    encoding = font_program->encoding();
-
-    return Type1Font::Data { font_program, to_unicode, encoding.release_nonnull(), move(widths), missing_width, false };
+    VERIFY(m_font_program || m_fallback_font_painter);
+    return {};
 }
 
-PDFErrorOr<NonnullRefPtr<Type1Font>> Type1Font::create(Document* document, NonnullRefPtr<DictObject> dict)
+Optional<float> Type1Font::get_glyph_width(u8 char_code) const
 {
-    auto data = TRY(Type1Font::parse_data(document, dict));
-    return adopt_ref(*new Type1Font(data));
+    if (m_fallback_font_painter)
+        return m_fallback_font_painter->get_glyph_width(char_code);
+    return OptionalNone {};
 }
 
-Type1Font::Type1Font(Data data)
-    : m_data(move(data))
+void Type1Font::set_font_size(float font_size)
 {
-    m_is_standard_font = data.is_standard_font;
+    if (m_fallback_font_painter)
+        m_fallback_font_painter->set_font_size(font_size);
 }
 
-u32 Type1Font::char_code_to_code_point(u16 char_code) const
+PDFErrorOr<void> Type1Font::draw_glyph(Gfx::Painter& painter, Gfx::FloatPoint point, float width, u8 char_code, Renderer const& renderer)
 {
-    if (m_data.to_unicode)
-        TODO();
+    auto style = renderer.state().paint_style;
 
-    auto descriptor = m_data.encoding->get_char_code_descriptor(char_code);
-    return descriptor.code_point;
-}
+    if (!m_font_program)
+        return m_fallback_font_painter->draw_glyph(painter, point, width, char_code, renderer);
 
-float Type1Font::get_char_width(u16 char_code, float) const
-{
-    u16 width;
-    if (auto char_code_width = m_data.widths.get(char_code); char_code_width.has_value()) {
-        width = char_code_width.value();
+    auto effective_encoding = encoding();
+    if (!effective_encoding)
+        effective_encoding = m_font_program->encoding();
+    if (!effective_encoding)
+        effective_encoding = Encoding::standard_encoding();
+    auto char_name = effective_encoding->get_name(char_code);
+    auto translation = m_font_program->glyph_translation(char_name, width);
+    point = point.translated(translation);
+
+    auto glyph_position = Gfx::GlyphRasterPosition::get_nearest_fit_for(point);
+    Type1GlyphCacheKey index { char_code, glyph_position.subpixel_offset, width };
+
+    RefPtr<Gfx::Bitmap> bitmap;
+    auto maybe_bitmap = m_glyph_cache.get(index);
+    if (maybe_bitmap.has_value()) {
+        bitmap = maybe_bitmap.value();
     } else {
-        width = m_data.missing_width;
+        bitmap = m_font_program->rasterize_glyph(char_name, width, glyph_position.subpixel_offset);
+        m_glyph_cache.set(index, bitmap);
     }
 
-    return static_cast<float>(width) / 1000.0f;
-}
-
-void Type1Font::draw_glyph(Gfx::Painter& painter, Gfx::IntPoint const& point, float width, u32 code_point, Color color)
-{
-    // FIXME: Make a glyph cache
-    if (m_data.font_program) {
-        auto path = m_data.font_program->build_char(code_point, { point.x(), point.y() }, width);
-        Gfx::AntiAliasingPainter aa_painter(painter);
-        aa_painter.fill_path(path, color, Gfx::Painter::WindingRule::EvenOdd);
+    if (style.has<Color>()) {
+        painter.blit_filtered(glyph_position.blit_position, *bitmap, bitmap->rect(), [style](Color pixel) -> Color {
+            return pixel.multiply(style.get<Color>());
+        });
+    } else {
+        style.get<NonnullRefPtr<Gfx::PaintStyle>>()->paint(bitmap->physical_rect(), [&](auto sample) {
+            painter.blit_filtered(glyph_position.blit_position, *bitmap, bitmap->rect(), [&](Color pixel) -> Color {
+                // FIXME: Presumably we need to sample at every point in the glyph, not just the top left?
+                return pixel.multiply(sample(glyph_position.blit_position));
+            });
+        });
     }
+    return {};
 }
 }

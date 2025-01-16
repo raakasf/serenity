@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Hex.h>
 #include <AK/ScopeGuard.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Document.h>
 #include <LibPDF/Filter.h>
 #include <LibPDF/Parser.h>
-#include <LibTextCodec/Decoder.h>
 #include <ctype.h>
 
 namespace PDF {
@@ -17,7 +17,7 @@ namespace PDF {
 PDFErrorOr<Vector<Operator>> Parser::parse_operators(Document* document, ReadonlyBytes bytes)
 {
     Parser parser(document, bytes);
-    parser.m_disable_encryption = true;
+    parser.m_enable_encryption = false;
     return parser.parse_operators();
 }
 
@@ -37,20 +37,23 @@ void Parser::set_document(WeakPtr<Document> const& document)
     m_document = document;
 }
 
-String Parser::parse_comment()
+ByteString Parser::parse_comment()
 {
-    if (!m_reader.matches('%'))
-        return {};
+    StringBuilder comment;
+    while (true) {
+        if (!m_reader.matches('%'))
+            break;
 
-    m_reader.consume();
-    auto comment_start_offset = m_reader.offset();
-    m_reader.move_until([&](auto) {
-        return m_reader.matches_eol();
-    });
-    String str = StringView(m_reader.bytes().slice(comment_start_offset, m_reader.offset() - comment_start_offset));
-    m_reader.consume_eol();
-    m_reader.consume_whitespace();
-    return str;
+        m_reader.consume();
+        auto comment_start_offset = m_reader.offset();
+        m_reader.move_until([&](auto) {
+            return m_reader.matches_eol();
+        });
+        comment.append(m_reader.bytes().slice(comment_start_offset, m_reader.offset() - comment_start_offset));
+        m_reader.consume_eol();
+        m_reader.consume_whitespace();
+    }
+    return comment.to_byte_string();
 }
 
 PDFErrorOr<Value> Parser::parse_value(CanBeIndirectValue can_be_indirect_value)
@@ -98,7 +101,8 @@ PDFErrorOr<Value> Parser::parse_value(CanBeIndirectValue can_be_indirect_value)
     if (m_reader.matches('['))
         return TRY(parse_array());
 
-    return error(String::formatted("Unexpected char \"{}\"", m_reader.peek()));
+    dbgln_if(PDF_DEBUG, "Unexpected char \"{}\"", m_reader.peek());
+    return error("Unexpected character");
 }
 
 PDFErrorOr<Value> Parser::parse_possible_indirect_value_or_ref()
@@ -136,6 +140,8 @@ PDFErrorOr<Value> Parser::parse_possible_indirect_value_or_ref()
 
 PDFErrorOr<NonnullRefPtr<IndirectValue>> Parser::parse_indirect_value(u32 index, u32 generation)
 {
+    dbgln_if(PDF_DEBUG, "Parsing indirect value {} {}", index, generation);
+
     if (!m_reader.matches("obj"))
         return error("Expected \"obj\" at beginning of indirect value");
     m_reader.move_by(3);
@@ -150,6 +156,8 @@ PDFErrorOr<NonnullRefPtr<IndirectValue>> Parser::parse_indirect_value(u32 index,
     m_reader.consume_whitespace();
 
     pop_reference();
+
+    dbgln_if(PDF_DEBUG, "Done parsing indirect value {} {}", index, generation);
 
     return make_object<IndirectValue>(index, generation, value);
 }
@@ -167,6 +175,8 @@ PDFErrorOr<NonnullRefPtr<IndirectValue>> Parser::parse_indirect_value()
 
 PDFErrorOr<Value> Parser::parse_number()
 {
+    m_reader.consume_whitespace();
+
     size_t start_offset = m_reader.offset();
     bool is_float = false;
     bool consumed_digit = false;
@@ -193,13 +203,11 @@ PDFErrorOr<Value> Parser::parse_number()
 
     m_reader.consume_whitespace();
 
-    auto string = String(m_reader.bytes().slice(start_offset, m_reader.offset() - start_offset));
-    float f = strtof(string.characters(), nullptr);
+    auto string = ByteString(m_reader.bytes().slice(start_offset, m_reader.offset() - start_offset));
     if (is_float)
-        return Value(f);
+        return Value(strtof(string.characters(), nullptr));
 
-    VERIFY(floorf(f) == f);
-    return Value(static_cast<int>(f));
+    return Value(atoi(string.characters()));
 }
 
 PDFErrorOr<NonnullRefPtr<NameObject>> Parser::parse_name()
@@ -214,16 +222,13 @@ PDFErrorOr<NonnullRefPtr<NameObject>> Parser::parse_name()
             break;
 
         if (m_reader.matches('#')) {
+            m_reader.consume();
             int hex_value = 0;
             for (int i = 0; i < 2; i++) {
                 auto ch = m_reader.consume();
-                VERIFY(isxdigit(ch));
+                VERIFY(is_ascii_hex_digit(ch));
                 hex_value *= 16;
-                if (ch <= '9') {
-                    hex_value += ch - '0';
-                } else {
-                    hex_value += ch - 'A' + 10;
-                }
+                hex_value += decode_hex_digit(ch);
             }
             builder.append(static_cast<char>(hex_value));
             continue;
@@ -234,52 +239,42 @@ PDFErrorOr<NonnullRefPtr<NameObject>> Parser::parse_name()
 
     m_reader.consume_whitespace();
 
-    return make_object<NameObject>(builder.to_string());
+    return make_object<NameObject>(builder.to_byte_string());
 }
 
-NonnullRefPtr<StringObject> Parser::parse_string()
+PDFErrorOr<NonnullRefPtr<StringObject>> Parser::parse_string()
 {
     ScopeGuard guard([&] { m_reader.consume_whitespace(); });
 
-    String string;
+    ByteString string;
     bool is_binary_string;
 
     if (m_reader.matches('(')) {
-        string = parse_literal_string();
+        string = TRY(parse_literal_string());
         is_binary_string = false;
     } else {
-        string = parse_hex_string();
+        string = TRY(parse_hex_string());
         is_binary_string = true;
     }
 
-    VERIFY(!string.is_null());
-
     auto string_object = make_object<StringObject>(string, is_binary_string);
 
-    if (m_document->security_handler() && !m_disable_encryption)
+    if (m_document->security_handler() && m_enable_encryption)
         m_document->security_handler()->decrypt(string_object, m_current_reference_stack.last());
-
-    auto unencrypted_string = string_object->string();
-
-    if (unencrypted_string.bytes().starts_with(Array<u8, 2> { 0xfe, 0xff })) {
-        // The string is encoded in UTF16-BE
-        string_object->set_string(TextCodec::decoder_for("utf-16be")->to_utf8(unencrypted_string));
-    } else if (unencrypted_string.bytes().starts_with(Array<u8, 3> { 239, 187, 191 })) {
-        // The string is encoded in UTF-8. This is the default anyways, but if these bytes
-        // are explicitly included, we have to trim them
-        string_object->set_string(unencrypted_string.substring(3));
-    }
 
     return string_object;
 }
 
-String Parser::parse_literal_string()
+PDFErrorOr<ByteString> Parser::parse_literal_string()
 {
     VERIFY(m_reader.consume('('));
     StringBuilder builder;
     auto opened_parens = 0;
 
     while (true) {
+        if (m_reader.done())
+            return error("unterminated string literal");
+
         if (m_reader.matches('(')) {
             opened_parens++;
             builder.append(m_reader.consume());
@@ -297,7 +292,7 @@ String Parser::parse_literal_string()
             }
 
             if (m_reader.done())
-                return {};
+                return error("out of data in string literal after \\");
 
             auto ch = m_reader.consume();
             switch (ch) {
@@ -348,43 +343,43 @@ String Parser::parse_literal_string()
         }
     }
 
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
-String Parser::parse_hex_string()
+PDFErrorOr<ByteString> Parser::parse_hex_string()
 {
     VERIFY(m_reader.consume('<'));
 
     StringBuilder builder;
 
     while (true) {
+        m_reader.consume_whitespace();
         if (m_reader.matches('>')) {
             m_reader.consume();
-            return builder.to_string();
+            return builder.to_byte_string();
         } else {
             int hex_value = 0;
 
             for (int i = 0; i < 2; i++) {
+                m_reader.consume_whitespace();
+
+                if (m_reader.done())
+                    return error("unterminated hex string");
+
                 auto ch = m_reader.consume();
                 if (ch == '>') {
                     // The hex string contains an odd number of characters, and the last character
                     // is assumed to be '0'
-                    m_reader.consume();
                     hex_value *= 16;
                     builder.append(static_cast<char>(hex_value));
-                    return builder.to_string();
+                    return builder.to_byte_string();
                 }
 
-                VERIFY(isxdigit(ch));
+                if (!is_ascii_hex_digit(ch))
+                    return error("character in hex string isn't hex digit");
 
                 hex_value *= 16;
-                if (ch <= '9') {
-                    hex_value += ch - '0';
-                } else if (ch >= 'A' && ch <= 'F') {
-                    hex_value += ch - 'A' + 10;
-                } else {
-                    hex_value += ch - 'a' + 10;
-                }
+                hex_value += decode_hex_digit(ch);
             }
 
             builder.append(static_cast<char>(hex_value));
@@ -408,27 +403,75 @@ PDFErrorOr<NonnullRefPtr<ArrayObject>> Parser::parse_array()
     return make_object<ArrayObject>(values);
 }
 
-PDFErrorOr<NonnullRefPtr<DictObject>> Parser::parse_dict()
+PDFErrorOr<HashMap<DeprecatedFlyString, Value>> Parser::parse_dict_contents_until(char const* end)
 {
-    if (!m_reader.consume('<') || !m_reader.consume('<'))
-        return error("Expected dict to start with \"<<\"");
-
     m_reader.consume_whitespace();
-    HashMap<FlyString, Value> map;
+    HashMap<DeprecatedFlyString, Value> map;
 
     while (!m_reader.done()) {
-        if (m_reader.matches(">>"))
+        parse_comment();
+        if (m_reader.matches(end))
             break;
         auto name = TRY(parse_name())->name();
         auto value = TRY(parse_value());
         map.set(name, value);
     }
 
+    return map;
+}
+
+PDFErrorOr<NonnullRefPtr<DictObject>> Parser::parse_dict()
+{
+    if (!m_reader.consume('<') || !m_reader.consume('<'))
+        return error("Expected dict to start with \"<<\"");
+
+    HashMap<DeprecatedFlyString, Value> map = TRY(parse_dict_contents_until(">>"));
+
     if (!m_reader.consume('>') || !m_reader.consume('>'))
         return error("Expected dict to end with \">>\"");
     m_reader.consume_whitespace();
 
-    return make_object<DictObject>(map);
+    return make_object<DictObject>(move(map));
+}
+
+PDFErrorOr<void> Parser::unfilter_stream(NonnullRefPtr<StreamObject> stream_object)
+{
+    auto const& dict = stream_object->dict();
+    if (!dict->contains(CommonNames::Filter))
+        return {};
+
+    Vector<DeprecatedFlyString> filters = TRY(m_document->read_filters(dict));
+
+    // Every filter may get its own parameter dictionary
+    Vector<RefPtr<DictObject>> decode_parms_vector;
+    RefPtr<Object> decode_parms_object;
+    if (dict->contains(CommonNames::DecodeParms)) {
+        decode_parms_object = TRY(dict->get_object(m_document, CommonNames::DecodeParms));
+        if (decode_parms_object->is<ArrayObject>()) {
+            auto decode_parms_array = decode_parms_object->cast<ArrayObject>();
+            for (size_t i = 0; i < decode_parms_array->size(); ++i) {
+                RefPtr<DictObject> decode_parms;
+                auto entry = decode_parms_array->at(i);
+                if (entry.has<NonnullRefPtr<Object>>())
+                    decode_parms = entry.get<NonnullRefPtr<Object>>()->cast<DictObject>();
+                decode_parms_vector.append(decode_parms);
+            }
+        } else {
+            decode_parms_vector.append(decode_parms_object->cast<DictObject>());
+        }
+    }
+
+    VERIFY(decode_parms_vector.is_empty() || decode_parms_vector.size() == filters.size());
+
+    for (size_t i = 0; i < filters.size(); ++i) {
+        RefPtr<DictObject> decode_parms;
+        if (!decode_parms_vector.is_empty())
+            decode_parms = decode_parms_vector.at(i);
+
+        stream_object->buffer() = TRY(Filter::decode(m_document, stream_object->bytes(), filters.at(i), decode_parms));
+    }
+
+    return {};
 }
 
 PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictObject> dict)
@@ -442,28 +485,22 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
     ReadonlyBytes bytes;
 
     auto maybe_length = dict->get(CommonNames::Length);
-    if (maybe_length.has_value() && (!maybe_length->has<Reference>())) {
+    if (maybe_length.has_value() && m_document->can_resolve_references()) {
         // The PDF writer has kindly provided us with the direct length of the stream
-        m_reader.save();
         auto length = TRY(m_document->resolve_to<int>(maybe_length.value()));
-        m_reader.load();
         bytes = m_reader.bytes().slice(m_reader.offset(), length);
         m_reader.move_by(length);
         m_reader.consume_whitespace();
     } else {
         // We have to look for the endstream keyword
         auto stream_start = m_reader.offset();
-
-        while (true) {
-            m_reader.move_until([&](auto) { return m_reader.matches_eol(); });
-            auto potential_stream_end = m_reader.offset();
-            m_reader.consume_eol();
-            if (!m_reader.matches("endstream"))
-                continue;
-
-            bytes = m_reader.bytes().slice(stream_start, potential_stream_end - stream_start);
-            break;
+        while (!m_reader.matches("endstream")) {
+            m_reader.consume();
+            m_reader.move_until('e');
         }
+        auto stream_end = m_reader.offset();
+        m_reader.consume_eol();
+        bytes = m_reader.bytes().slice(stream_start, stream_end - stream_start);
     }
 
     m_reader.move_by(9);
@@ -471,20 +508,58 @@ PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_stream(NonnullRefPtr<DictO
 
     auto stream_object = make_object<StreamObject>(dict, MUST(ByteBuffer::copy(bytes)));
 
-    if (m_document->security_handler() && !m_disable_encryption)
+    if (m_document->security_handler() && m_enable_encryption)
         m_document->security_handler()->decrypt(stream_object, m_current_reference_stack.last());
 
-    if (dict->contains(CommonNames::Filter)) {
-        auto filter_type = MUST(dict->get_name(m_document, CommonNames::Filter))->name();
-        auto maybe_bytes = Filter::decode(stream_object->bytes(), filter_type);
-        if (maybe_bytes.is_error()) {
-            warnln("Failed to decode filter: {}", maybe_bytes.error().string_literal());
-            return error(String::formatted("Failed to decode filter {}", maybe_bytes.error().string_literal()));
-        }
-        stream_object->buffer() = maybe_bytes.release_value();
-    }
+    if (m_enable_filters)
+        TRY(unfilter_stream(stream_object));
 
     return stream_object;
+}
+
+PDFErrorOr<NonnullRefPtr<StreamObject>> Parser::parse_inline_image()
+{
+    // Inline images contain a dictionary containing arbitrary values between BI and ID,
+    // and then arbitrary binary data between ID and EI.
+    // This means they need a special code path in the parser, so that image data in there doesn't confuse the operator parser.
+
+    HashMap<DeprecatedFlyString, Value> map = TRY(parse_dict_contents_until("ID"));
+    m_reader.consume(2); // "ID"
+
+    // "Unless the image uses ASCIIHexDecode or ASCII85Decode as one of its filters,
+    // the ID operator should be followed by a single white-space character,
+    // and the next character is interpreted as the first byte of image data. [...]
+    // The bytes between the ID and EI operators are treated much the same as a stream object’s data
+    // (see Section 3.2.7, “Stream Objects”), even though they do not follow the standard stream syntax.
+    // (This is an exception to the usual rule that the data in a content stream is interpreted
+    // according to the standard PDF syntax for objects.)"
+    m_reader.consume(1);
+
+    // FIMXE: PDF 2.0 added support for `/L` / `/Length` in inline image dicts. If that's present, we don't have to scan for `EI`.
+    auto stream_start = m_reader.offset();
+    while (!m_reader.done()) {
+        // FIXME: Should we allow EI after matches_delimiter() too?
+        bool expecting_ei = m_reader.matches_whitespace();
+        m_reader.consume();
+        if (expecting_ei && m_reader.matches("EI")) {
+            break;
+        }
+    }
+
+    if (m_reader.done())
+        return error("operator stream ended inside inline image");
+
+    // Points one past the end of the stream data.
+    // FIXME: If we add matches_delimiter() to expecting_ei above, this has to be 1 larger in the delimiter case.
+    auto stream_end = m_reader.offset();
+
+    m_reader.consume(2); // "EI"
+    m_reader.consume_whitespace();
+
+    auto stream_bytes = m_reader.bytes().slice(stream_start, stream_end - stream_start);
+
+    auto map_object = make_object<DictObject>(move(map));
+    return make_object<StreamObject>(move(map_object), MUST(ByteBuffer::copy(stream_bytes)));
 }
 
 PDFErrorOr<Vector<Operator>> Parser::parse_operators()
@@ -492,17 +567,23 @@ PDFErrorOr<Vector<Operator>> Parser::parse_operators()
     Vector<Operator> operators;
     Vector<Value> operator_args;
 
-    constexpr static auto is_operator_char = [](char ch) {
-        return isalpha(ch) || ch == '*' || ch == '\'';
+    constexpr static auto is_operator_char_start = [](char ch) {
+        return isalpha(ch) || ch == '*' || ch == '\'' || ch == '"';
+    };
+    constexpr static auto is_operator_char_continuation = [](char ch) {
+        return is_operator_char_start(ch) || ch == '0' || ch == '1';
     };
 
     m_reader.consume_whitespace();
 
     while (!m_reader.done()) {
+        parse_comment();
+        if (m_reader.done())
+            break;
         auto ch = m_reader.peek();
-        if (is_operator_char(ch)) {
+        if (is_operator_char_start(ch)) {
             auto operator_start = m_reader.offset();
-            while (is_operator_char(ch)) {
+            while (is_operator_char_continuation(ch)) {
                 m_reader.consume();
                 if (m_reader.done())
                     break;
@@ -510,10 +591,19 @@ PDFErrorOr<Vector<Operator>> Parser::parse_operators()
             }
 
             auto operator_string = StringView(m_reader.bytes().slice(operator_start, m_reader.offset() - operator_start));
+            m_reader.consume_whitespace();
+
             auto operator_type = Operator::operator_type_from_symbol(operator_string);
+
+            if (operator_type == OperatorType::InlineImageBegin) {
+                if (!operator_args.is_empty())
+                    return error("operator args not empty on start of inline image");
+                operators.append(Operator(OperatorType::InlineImageEnd, { TRY(parse_inline_image()) }));
+                continue;
+            }
+
             operators.append(Operator(operator_type, move(operator_args)));
             operator_args = Vector<Value>();
-            m_reader.consume_whitespace();
 
             continue;
         }
@@ -528,7 +618,7 @@ PDFErrorOr<Vector<Operator>> Parser::parse_operators()
 }
 
 Error Parser::error(
-    String const& message
+    ByteString const& message
 #ifdef PDF_DEBUG
     ,
     SourceLocation loc

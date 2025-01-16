@@ -13,8 +13,8 @@ using namespace Chess::UCI;
 
 void ChessEngine::handle_uci()
 {
-    send_command(IdCommand(IdCommand::Type::Name, "ChessEngine"sv));
-    send_command(IdCommand(IdCommand::Type::Author, "the SerenityOS developers"sv));
+    send_command(IdCommand(IdCommand::Type::Name, "ChessEngine"_string));
+    send_command(IdCommand(IdCommand::Type::Author, "the SerenityOS developers"_string));
     send_command(UCIOkCommand());
 }
 
@@ -60,4 +60,22 @@ void ChessEngine::handle_go(GoCommand const& command)
     send_command(BestMoveCommand(best_move));
 
     m_last_tree = move(best_node);
+}
+
+void ChessEngine::handle_quit()
+{
+    if (on_quit)
+        on_quit(ESUCCESS);
+}
+
+void ChessEngine::handle_unexpected_eof()
+{
+    if (on_quit)
+        on_quit(EPIPE);
+}
+
+void ChessEngine::handle_ucinewgame()
+{
+    m_board = Chess::Board();
+    m_last_tree = {};
 }

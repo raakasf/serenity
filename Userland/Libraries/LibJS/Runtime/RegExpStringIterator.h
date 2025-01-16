@@ -14,9 +14,10 @@ namespace JS {
 
 class RegExpStringIterator final : public Object {
     JS_OBJECT(RegExpStringIterator, Object);
+    JS_DECLARE_ALLOCATOR(RegExpStringIterator);
 
 public:
-    static RegExpStringIterator* create(Realm&, Object& regexp_object, Utf16String string, bool global, bool unicode);
+    static NonnullGCPtr<RegExpStringIterator> create(Realm&, Object& regexp_object, Utf16String string, bool global, bool unicode);
 
     virtual ~RegExpStringIterator() override = default;
 
@@ -33,7 +34,7 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    Object& m_regexp_object;
+    NonnullGCPtr<Object> m_regexp_object;
     Utf16String m_string;
     bool m_global { false };
     bool m_unicode { false };

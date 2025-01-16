@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,15 +12,17 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(PlainTimeConstructor);
+
 // 4.1 The Temporal.PlainTime Constructor, https://tc39.es/proposal-temporal/#sec-temporal-plaintime-constructor
 PlainTimeConstructor::PlainTimeConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.PlainTime.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.PlainTime.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void PlainTimeConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -44,27 +46,27 @@ ThrowCompletionOr<Value> PlainTimeConstructor::call()
 }
 
 // 4.1.1 Temporal.PlainTime ( [ hour [ , minute [ , second [ , millisecond [ , microsecond [ , nanosecond ] ] ] ] ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.plaintime
-ThrowCompletionOr<Object*> PlainTimeConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> PlainTimeConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
-    // 2. Let hour be ? ToIntegerThrowOnInfinity(hour).
-    auto hour = TRY(to_integer_throw_on_infinity(vm, vm.argument(0), ErrorType::TemporalInvalidPlainTime));
+    // 2. Let hour be ? ToIntegerWithTruncation(hour).
+    auto hour = TRY(to_integer_with_truncation(vm, vm.argument(0), ErrorType::TemporalInvalidPlainTime));
 
-    // 3. Let minute be ? ToIntegerThrowOnInfinity(hour).
-    auto minute = TRY(to_integer_throw_on_infinity(vm, vm.argument(1), ErrorType::TemporalInvalidPlainTime));
+    // 3. Let minute be ? ToIntegerWithTruncation(hour).
+    auto minute = TRY(to_integer_with_truncation(vm, vm.argument(1), ErrorType::TemporalInvalidPlainTime));
 
-    // 4. Let second be ? ToIntegerThrowOnInfinity(hour).
-    auto second = TRY(to_integer_throw_on_infinity(vm, vm.argument(2), ErrorType::TemporalInvalidPlainTime));
+    // 4. Let second be ? ToIntegerWithTruncation(hour).
+    auto second = TRY(to_integer_with_truncation(vm, vm.argument(2), ErrorType::TemporalInvalidPlainTime));
 
-    // 5. Let millisecond be ? ToIntegerThrowOnInfinity(hour).
-    auto millisecond = TRY(to_integer_throw_on_infinity(vm, vm.argument(3), ErrorType::TemporalInvalidPlainTime));
+    // 5. Let millisecond be ? ToIntegerWithTruncation(hour).
+    auto millisecond = TRY(to_integer_with_truncation(vm, vm.argument(3), ErrorType::TemporalInvalidPlainTime));
 
-    // 6. Let microsecond be ? ToIntegerThrowOnInfinity(hour).
-    auto microsecond = TRY(to_integer_throw_on_infinity(vm, vm.argument(4), ErrorType::TemporalInvalidPlainTime));
+    // 6. Let microsecond be ? ToIntegerWithTruncation(hour).
+    auto microsecond = TRY(to_integer_with_truncation(vm, vm.argument(4), ErrorType::TemporalInvalidPlainTime));
 
-    // 7. Let nanosecond be ? ToIntegerThrowOnInfinity(hour).
-    auto nanosecond = TRY(to_integer_throw_on_infinity(vm, vm.argument(5), ErrorType::TemporalInvalidPlainTime));
+    // 7. Let nanosecond be ? ToIntegerWithTruncation(hour).
+    auto nanosecond = TRY(to_integer_with_truncation(vm, vm.argument(5), ErrorType::TemporalInvalidPlainTime));
 
     // IMPLEMENTATION DEFINED: This is an optimization that allows us to treat these doubles as normal integers from this point onwards.
     // This does not change the exposed behavior as the call to CreateTemporalTime will immediately check that these values are valid
@@ -74,7 +76,7 @@ ThrowCompletionOr<Object*> PlainTimeConstructor::construct(FunctionObject& new_t
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidPlainTime);
 
     // 8. Return ? CreateTemporalTime(hour, minute, second, millisecond, microsecond, nanosecond, NewTarget).
-    return TRY(create_temporal_time(vm, hour, minute, second, millisecond, microsecond, nanosecond, &new_target));
+    return *TRY(create_temporal_time(vm, hour, minute, second, millisecond, microsecond, nanosecond, &new_target));
 }
 
 // 4.2.2 Temporal.PlainTime.from ( item [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.plaintime.from

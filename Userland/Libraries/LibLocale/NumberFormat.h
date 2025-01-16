@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,7 +33,6 @@ enum class CompactNumberFormatType : u8 {
     DecimalLong,
     DecimalShort,
     CurrencyUnit,
-    CurrencyShort,
 };
 
 struct NumberFormat {
@@ -63,7 +62,7 @@ enum class NumericSymbol : u8 {
 Optional<StringView> get_number_system_symbol(StringView locale, StringView system, NumericSymbol symbol);
 Optional<NumberGroupings> get_number_system_groupings(StringView locale, StringView system);
 
-Optional<Span<u32 const>> get_digits_for_number_system(StringView system);
+Optional<ReadonlySpan<u32>> get_digits_for_number_system(StringView system);
 String replace_digits_for_number_system(StringView system, StringView number);
 
 Optional<NumberFormat> get_standard_number_system_format(StringView locale, StringView system, StandardNumberFormatType type);

@@ -5,7 +5,7 @@
  */
 
 #include <AK/Format.h>
-#include <LibJS/Contrib/Test262/$262Object.h>
+#include <LibJS/Contrib/Test262/262Object.h>
 #include <LibJS/Contrib/Test262/AgentObject.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
 #include <LibJS/Heap/Cell.h>
@@ -13,6 +13,8 @@
 #include <LibJS/Runtime/VM.h>
 
 namespace JS::Test262 {
+
+JS_DEFINE_ALLOCATOR(GlobalObject);
 
 void GlobalObject::initialize(Realm& realm)
 {
@@ -34,7 +36,7 @@ void GlobalObject::visit_edges(Cell::Visitor& visitor)
 
 JS_DEFINE_NATIVE_FUNCTION(GlobalObject::print)
 {
-    auto string = TRY(vm.argument(0).to_string(vm));
+    auto string = TRY(vm.argument(0).to_byte_string(vm));
     outln("{}", string);
     return js_undefined();
 }

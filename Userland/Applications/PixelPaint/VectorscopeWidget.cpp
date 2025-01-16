@@ -31,12 +31,12 @@ void VectorscopeWidget::image_changed()
 
 ErrorOr<void> VectorscopeWidget::rebuild_vectorscope_data()
 {
-    if (!m_image)
+    if (!should_process_data())
         return {};
 
     m_vectorscope_data.fill({});
     VERIFY(AK::abs(m_vectorscope_data[0][0]) < 0.01f);
-    auto full_bitmap = TRY(m_image->try_compose_bitmap(Gfx::BitmapFormat::BGRA8888));
+    auto full_bitmap = TRY(m_image->compose_bitmap(Gfx::BitmapFormat::BGRA8888));
 
     for (size_t x = 0; x < static_cast<size_t>(full_bitmap->width()); ++x) {
         for (size_t y = 0; y < static_cast<size_t>(full_bitmap->height()); ++y) {
@@ -60,7 +60,7 @@ ErrorOr<void> VectorscopeWidget::rebuild_vectorscope_data()
 
 void VectorscopeWidget::rebuild_vectorscope_image()
 {
-    m_vectorscope_image = MUST(Gfx::Bitmap::try_create(Gfx::BitmapFormat::BGRA8888, size()));
+    m_vectorscope_image = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, size()));
     m_vectorscope_image->fill(Color::Transparent);
 
     Gfx::Painter base_painter(*m_vectorscope_image);
@@ -124,11 +124,37 @@ void VectorscopeWidget::paint_event(GUI::PaintEvent& event)
     painter.translate(-static_cast<float>(width()) / 2.0f, -static_cast<float>(height()) / 2.0f);
 
     for (auto const& primary_color : primary_colors) {
-        // FIXME: Only draw the rectangle corners for a more classical oscilloscope look (& less obscuring of color data)
-        auto graticule_rect = Gfx::FloatRect::centered_at(primary_color.to_vector(scope_size), { graticule_size, graticule_size }).to_rounded<int>();
-        base_painter.draw_rect_with_thickness(graticule_rect, graticule_color, graticule_thickness);
-        auto text_rect = graticule_rect.translated(graticule_size / 2, graticule_size / 2);
-        base_painter.draw_text(text_rect, StringView { &primary_color.symbol, 1 }, Gfx::TextAlignment::TopLeft, graticule_color);
+        auto center = primary_color.to_vector(scope_size);
+        auto center_rounded = center.to_rounded<int>();
+        // Box color
+        Gfx::Color corner_color = Gfx::Color::from_yuv(0.5f, primary_color.u, primary_color.v).saturated_to(0.5);
+
+        // Bracket vertex calculations
+        int left_outer_vertex = center_rounded.x() - graticule_size / 2;
+        int right_outer_vertex = center_rounded.x() + graticule_size / 2;
+        int top_outer_vertex = center_rounded.y() - graticule_size / 2;
+        int bottom_outer_vertex = center_rounded.y() + graticule_size / 2;
+        int left_inner_vertex = center_rounded.x() - graticule_size / 3;
+        int right_inner_vertex = center_rounded.x() + graticule_size / 3;
+        int top_inner_vertex = center_rounded.y() - graticule_size / 3;
+        int bottom_inner_vertex = center_rounded.y() + graticule_size / 3;
+
+        // Top Left Corner
+        base_painter.draw_line(Gfx::IntPoint(left_outer_vertex, top_outer_vertex), Gfx::IntPoint(left_inner_vertex, top_outer_vertex), corner_color, graticule_thickness);
+        base_painter.draw_line(Gfx::IntPoint(left_outer_vertex, top_outer_vertex), Gfx::IntPoint(left_outer_vertex, top_inner_vertex), corner_color, graticule_thickness);
+        // Top Right Corner
+        base_painter.draw_line(Gfx::IntPoint(right_outer_vertex, top_outer_vertex), Gfx::IntPoint(right_inner_vertex, top_outer_vertex), corner_color, graticule_thickness);
+        base_painter.draw_line(Gfx::IntPoint(right_outer_vertex, top_outer_vertex), Gfx::IntPoint(right_outer_vertex, top_inner_vertex), corner_color, graticule_thickness);
+        // Bottom Left Corner
+        base_painter.draw_line(Gfx::IntPoint(left_outer_vertex, bottom_outer_vertex), Gfx::IntPoint(left_inner_vertex, center_rounded.y() + graticule_size / 2), corner_color, graticule_thickness);
+        base_painter.draw_line(Gfx::IntPoint(left_outer_vertex, center_rounded.y() + graticule_size / 2), Gfx::IntPoint(left_outer_vertex, bottom_inner_vertex), corner_color, graticule_thickness);
+        // Bottom Right Corner
+        base_painter.draw_line(Gfx::IntPoint(right_outer_vertex, center_rounded.y() + graticule_size / 2), Gfx::IntPoint(right_inner_vertex, center_rounded.y() + graticule_size / 2), corner_color, graticule_thickness);
+        base_painter.draw_line(Gfx::IntPoint(right_outer_vertex, center_rounded.y() + graticule_size / 2), Gfx::IntPoint(right_outer_vertex, bottom_inner_vertex), corner_color, graticule_thickness);
+
+        // Add text label to vectorscope
+        auto text_rect = Gfx::FloatRect::centered_at(center, { graticule_size, graticule_size }).to_rounded<int>().translated(-(graticule_thickness + 1), -(graticule_thickness + 1));
+        base_painter.draw_text(text_rect, StringView { &primary_color.symbol, 1 }, Gfx::TextAlignment::BottomRight, graticule_color);
     }
 
     if (m_color_at_mouseposition != Color::Transparent) {

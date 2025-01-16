@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibGUI/EditingEngine.h>
 #include <LibGUI/TextRange.h>
 
@@ -122,7 +122,6 @@ private:
     void calculate_document_range(TextEditor&);
     void calculate_line_range(TextEditor&, bool normalize_for_position);
     void calculate_word_range(VimCursor&, int amount, bool normalize_for_position);
-    void calculate_WORD_range(VimCursor&, int amount, bool normalize_for_position);
     void calculate_character_range(VimCursor&, int amount, bool normalize_for_position);
     void calculate_find_range(VimCursor&, int amount);
 
@@ -171,7 +170,7 @@ private:
     VimMotion m_motion;
 
     YankType m_yank_type {};
-    String m_yank_buffer {};
+    ByteString m_yank_buffer {};
     void yank(YankType);
     void yank(TextRange, YankType yank_type);
     void put_before();

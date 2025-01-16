@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,20 +20,22 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(Now);
+
 // 2 The Temporal.Now Object, https://tc39.es/proposal-temporal/#sec-temporal-now-object
 Now::Now(Realm& realm)
-    : Object(*realm.intrinsics().object_prototype())
+    : Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
 {
 }
 
 void Now::initialize(Realm& realm)
 {
-    Object::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 2.1.1 Temporal.Now [ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal-now-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, "Temporal.Now"), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Now"_string), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.timeZone, time_zone, 0, attr);
@@ -152,9 +154,10 @@ JS_DEFINE_NATIVE_FUNCTION(Now::plain_time_iso)
 TimeZone* system_time_zone(VM& vm)
 {
     // 1. Let identifier be ! DefaultTimeZone().
-    auto identifier = default_time_zone();
+    auto identifier = system_time_zone_identifier();
 
     // 2. Return ! CreateTemporalTimeZone(identifier).
+    // FIXME: Propagate possible OOM error
     return MUST(create_temporal_time_zone(vm, identifier));
 }
 
@@ -162,15 +165,15 @@ TimeZone* system_time_zone(VM& vm)
 BigInt* system_utc_epoch_nanoseconds(VM& vm)
 {
     // 1. Let ns be the approximate current UTC date and time, in nanoseconds since the epoch.
-    auto now = Time::now_realtime().to_nanoseconds();
+    auto now = AK::UnixDateTime::now().nanoseconds_since_epoch();
     auto ns = Crypto::SignedBigInteger { now };
 
     // 2. Set ns to the result of clamping ns between nsMinInstant and nsMaxInstant.
-    // NOTE: Time::to_nanoseconds() already clamps between -(2^63) and 2^63 - 1, the range of an i64,
+    // NOTE: Duration::to_nanoseconds() already clamps between -(2^63) and 2^63 - 1, the range of an i64,
     //       if an overflow occurs during seconds -> nanoseconds conversion.
 
     // 3. Return ℤ(ns).
-    return js_bigint(vm, move(ns));
+    return BigInt::create(vm, move(ns));
 }
 
 // 2.3.3 SystemInstant ( ), https://tc39.es/proposal-temporal/#sec-temporal-systeminstant

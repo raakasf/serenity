@@ -1,10 +1,11 @@
 /*
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "../LibUnicode/GeneratorUtil.h" // FIXME: Move this somewhere common.
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/HashMap.h>
 #include <AK/JsonObject.h>
@@ -12,19 +13,11 @@
 #include <AK/JsonValue.h>
 #include <AK/LexicalPath.h>
 #include <AK/SourceGenerator.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/DirIterator.h>
-#include <LibCore/Stream.h>
+#include <LibCore/Directory.h>
 #include <LibLocale/Locale.h>
 #include <LibLocale/RelativeTimeFormat.h>
-
-using StringIndexType = u16;
-constexpr auto s_string_index_type = "u16"sv;
-
-using RelativeTimeFormatIndexType = u16;
-constexpr auto s_relative_time_format_index_type = "u16"sv;
 
 struct RelativeTimeFormat {
     unsigned hash() const
@@ -46,11 +39,11 @@ struct RelativeTimeFormat {
             && (pattern == other.pattern);
     }
 
-    String time_unit;
-    String style;
-    String plurality;
-    StringIndexType tense_or_number { 0 };
-    StringIndexType pattern { 0 };
+    ByteString time_unit;
+    ByteString style;
+    ByteString plurality;
+    size_t tense_or_number { 0 };
+    size_t pattern { 0 };
 };
 
 template<>
@@ -68,31 +61,31 @@ struct AK::Formatter<RelativeTimeFormat> : Formatter<FormatString> {
 };
 
 template<>
-struct AK::Traits<RelativeTimeFormat> : public GenericTraits<RelativeTimeFormat> {
+struct AK::Traits<RelativeTimeFormat> : public DefaultTraits<RelativeTimeFormat> {
     static unsigned hash(RelativeTimeFormat const& format) { return format.hash(); }
 };
 
 struct LocaleData {
-    Vector<RelativeTimeFormatIndexType> time_units;
+    Vector<size_t> time_units;
 };
 
 struct CLDR {
-    UniqueStringStorage<StringIndexType> unique_strings;
-    UniqueStorage<RelativeTimeFormat, RelativeTimeFormatIndexType> unique_formats;
+    UniqueStringStorage unique_strings;
+    UniqueStorage<RelativeTimeFormat> unique_formats;
 
-    HashMap<String, LocaleData> locales;
+    HashMap<ByteString, LocaleData> locales;
 };
 
-static ErrorOr<void> parse_date_fields(String locale_dates_path, CLDR& cldr, LocaleData& locale)
+static ErrorOr<void> parse_date_fields(ByteString locale_dates_path, CLDR& cldr, LocaleData& locale)
 {
     LexicalPath date_fields_path(move(locale_dates_path));
     date_fields_path = date_fields_path.append("dateFields.json"sv);
 
     auto date_fields = TRY(read_json_file(date_fields_path.string()));
-    auto const& main_object = date_fields.as_object().get("main"sv);
-    auto const& locale_object = main_object.as_object().get(date_fields_path.parent().basename());
-    auto const& dates_object = locale_object.as_object().get("dates"sv);
-    auto const& fields_object = dates_object.as_object().get("fields"sv);
+    auto const& main_object = date_fields.as_object().get_object("main"sv).value();
+    auto const& locale_object = main_object.get_object(date_fields_path.parent().basename()).value();
+    auto const& dates_object = locale_object.get_object("dates"sv).value();
+    auto const& fields_object = dates_object.get_object("fields"sv).value();
 
     auto is_sanctioned_unit = [](auto unit) {
         // This is a copy of the time units sanctioned for use within ECMA-402.
@@ -111,7 +104,7 @@ static ErrorOr<void> parse_date_fields(String locale_dates_path, CLDR& cldr, Loc
         locale.time_units.append(cldr.unique_formats.ensure(move(format)));
     };
 
-    fields_object.as_object().for_each_member([&](auto const& unit_and_style, auto const& patterns) {
+    fields_object.for_each_member([&](auto const& unit_and_style, auto const& patterns) {
         auto segments = unit_and_style.split_view('-');
         auto unit = segments[0];
         auto style = (segments.size() > 1) ? segments[1] : "long"sv;
@@ -142,12 +135,10 @@ static ErrorOr<void> parse_date_fields(String locale_dates_path, CLDR& cldr, Loc
     return {};
 }
 
-static ErrorOr<void> parse_all_locales(String dates_path, CLDR& cldr)
+static ErrorOr<void> parse_all_locales(ByteString dates_path, CLDR& cldr)
 {
-    auto dates_iterator = TRY(path_to_dir_iterator(move(dates_path)));
-
-    auto remove_variants_from_path = [&](String path) -> ErrorOr<String> {
-        auto parsed_locale = TRY(CanonicalLanguageID<StringIndexType>::parse(cldr.unique_strings, LexicalPath::basename(path)));
+    auto remove_variants_from_path = [&](ByteString path) -> ErrorOr<ByteString> {
+        auto parsed_locale = TRY(CanonicalLanguageID::parse(cldr.unique_strings, LexicalPath::basename(path)));
 
         StringBuilder builder;
         builder.append(cldr.unique_strings.get(parsed_locale.language));
@@ -156,21 +147,22 @@ static ErrorOr<void> parse_all_locales(String dates_path, CLDR& cldr)
         if (auto region = cldr.unique_strings.get(parsed_locale.region); !region.is_empty())
             builder.appendff("-{}", region);
 
-        return builder.build();
+        return builder.to_byte_string();
     };
 
-    while (dates_iterator.has_next()) {
-        auto dates_path = TRY(next_path_from_dir_iterator(dates_iterator));
+    TRY(Core::Directory::for_each_entry(TRY(String::formatted("{}/main", dates_path)), Core::DirIterator::SkipParentAndBaseDir, [&](auto& entry, auto& directory) -> ErrorOr<IterationDecision> {
+        auto dates_path = LexicalPath::join(directory.path().string(), entry.name).string();
         auto language = TRY(remove_variants_from_path(dates_path));
 
         auto& locale = cldr.locales.ensure(language);
         TRY(parse_date_fields(move(dates_path), cldr, locale));
-    }
+        return IterationDecision::Continue;
+    }));
 
     return {};
 }
 
-static ErrorOr<void> generate_unicode_locale_header(Core::Stream::BufferedFile& file, CLDR&)
+static ErrorOr<void> generate_unicode_locale_header(Core::InputBufferedFile& file, CLDR&)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
@@ -187,16 +179,16 @@ namespace Locale {
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
-static ErrorOr<void> generate_unicode_locale_implementation(Core::Stream::BufferedFile& file, CLDR& cldr)
+static ErrorOr<void> generate_unicode_locale_implementation(Core::InputBufferedFile& file, CLDR& cldr)
 {
     StringBuilder builder;
     SourceGenerator generator { builder };
-    generator.set("string_index_type"sv, s_string_index_type);
-    generator.set("relative_time_format_index_type"sv, s_relative_time_format_index_type);
+    generator.set("string_index_type"sv, cldr.unique_strings.type_that_fits());
+    generator.set("relative_time_format_index_type"sv, cldr.unique_formats.type_that_fits());
 
     generator.append(R"~~~(
 #include <AK/Array.h>
@@ -233,9 +225,9 @@ struct RelativeTimeFormatImpl {
 
     cldr.unique_formats.generate(generator, "RelativeTimeFormatImpl"sv, "s_relative_time_formats"sv, 10);
 
-    auto append_list = [&](String name, auto const& list) {
+    auto append_list = [&](ByteString name, auto const& list) {
         generator.set("name", name);
-        generator.set("size", String::number(list.size()));
+        generator.set("size", ByteString::number(list.size()));
 
         generator.append(R"~~~(
 static constexpr Array<@relative_time_format_index_type@, @size@> @name@ { {)~~~");
@@ -243,14 +235,14 @@ static constexpr Array<@relative_time_format_index_type@, @size@> @name@ { {)~~~
         bool first = true;
         for (auto index : list) {
             generator.append(first ? " "sv : ", "sv);
-            generator.append(String::number(index));
+            generator.append(ByteString::number(index));
             first = false;
         }
 
         generator.append(" } };");
     };
 
-    generate_mapping(generator, cldr.locales, s_relative_time_format_index_type, "s_locale_relative_time_formats"sv, "s_number_systems_digits_{}"sv, nullptr, [&](auto const& name, auto const& value) { append_list(name, value.time_units); });
+    generate_mapping(generator, cldr.locales, cldr.unique_formats.type_that_fits(), "s_locale_relative_time_formats"sv, "s_number_systems_digits_{}"sv, nullptr, [&](auto const& name, auto const& value) { append_list(name, value.time_units); });
 
     generator.append(R"~~~(
 Vector<RelativeTimeFormat> get_relative_time_format_patterns(StringView locale, TimeUnit time_unit, StringView tense_or_number, Style style)
@@ -283,7 +275,7 @@ Vector<RelativeTimeFormat> get_relative_time_format_patterns(StringView locale, 
 }
 )~~~");
 
-    TRY(file.write(generator.as_string_view().bytes()));
+    TRY(file.write_until_depleted(generator.as_string_view().bytes()));
     return {};
 }
 
@@ -299,8 +291,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_option(dates_path, "Path to cldr-dates directory", "dates-path", 'd', "dates-path");
     args_parser.parse(arguments);
 
-    auto generated_header_file = TRY(open_file(generated_header_path, Core::Stream::OpenMode::Write));
-    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::Stream::OpenMode::Write));
+    auto generated_header_file = TRY(open_file(generated_header_path, Core::File::OpenMode::Write));
+    auto generated_implementation_file = TRY(open_file(generated_implementation_path, Core::File::OpenMode::Write));
 
     CLDR cldr;
     TRY(parse_all_locales(dates_path, cldr));

@@ -80,7 +80,6 @@ public:
         T& operator*() { return *m_value; }
         auto operator->() { return m_value; }
         bool operator==(Iterator const& other) const { return other.m_value == m_value; }
-        bool operator!=(Iterator const& other) const { return !(*this == other); }
         Iterator& operator++()
         {
             m_value = IntrusiveList<T, Container, member>::next(m_value);
@@ -108,13 +107,11 @@ public:
         T& operator*() { return *m_value; }
         auto operator->() { return m_value; }
         bool operator==(ReverseIterator const& other) const { return other.m_value == m_value; }
-        bool operator!=(ReverseIterator const& other) const { return !(*this == other); }
         ReverseIterator& operator++()
         {
             m_value = IntrusiveList<T, Container, member>::prev(m_value);
             return *this;
         }
-        ReverseIterator& erase();
 
     private:
         T* m_value { nullptr };
@@ -134,7 +131,6 @@ public:
         T const& operator*() const { return *m_value; }
         auto operator->() const { return m_value; }
         bool operator==(ConstIterator const& other) const { return other.m_value == m_value; }
-        bool operator!=(ConstIterator const& other) const { return !(*this == other); }
         ConstIterator& operator++()
         {
             m_value = IntrusiveList<T, Container, member>::next(m_value);
@@ -379,13 +375,20 @@ inline typename IntrusiveList<T, Container, member>::ConstIterator IntrusiveList
 template<class T, typename Container, SubstitutedIntrusiveListNode<T, Container> T::*member>
 inline T* IntrusiveList<T, Container, member>::node_to_value(SubstitutedIntrusiveListNode<T, Container>& node)
 {
+    // Note: A data member pointer is a 32-bit offset in the Windows ABI (both x86 and x86_64),
+    //       whereas it is an appropriately sized ptrdiff_t in the Itanium ABI, the following ensures
+    //       that we always use the correct type for the subtraction.
+    using EquivalentNumericTypeForDataMemberPointer = Conditional<sizeof(member) == sizeof(ptrdiff_t), ptrdiff_t, u32>;
+    static_assert(sizeof(EquivalentNumericTypeForDataMemberPointer) == sizeof(member),
+        "The equivalent numeric type for the data member pointer must have the same size as the data member pointer itself.");
+
     // Note: Since this might seem odd, here's an explanation on what this function actually does:
     //       `node` is a reference that resides in some part of the actual value (of type T), the
     //       placement (i.e. offset) of which is described by the pointer-to-data-member parameter
     //       named `member`.
     //       This function effectively takes in the address of the data member, and returns the address
     //       of the value (of type T) holding that member.
-    return bit_cast<T*>(bit_cast<unsigned char*>(&node) - bit_cast<unsigned char*>(member));
+    return bit_cast<T*>(bit_cast<unsigned char*>(&node) - bit_cast<EquivalentNumericTypeForDataMemberPointer>(member));
 }
 
 template<typename T, typename Container>
@@ -464,5 +467,7 @@ using IntrusiveList = Detail::IntrusiveList<
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::IntrusiveList;
 using AK::IntrusiveListNode;
+#endif

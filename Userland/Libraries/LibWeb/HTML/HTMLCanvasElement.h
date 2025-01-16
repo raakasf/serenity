@@ -15,6 +15,7 @@ namespace Web::HTML {
 
 class HTMLCanvasElement final : public HTMLElement {
     WEB_PLATFORM_OBJECT(HTMLCanvasElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLCanvasElement);
 
 public:
     using RenderingContext = Variant<JS::Handle<CanvasRenderingContext2D>, JS::Handle<WebGL::WebGLRenderingContext>, Empty>;
@@ -30,17 +31,21 @@ public:
     unsigned width() const;
     unsigned height() const;
 
-    void set_width(unsigned);
-    void set_height(unsigned);
+    WebIDL::ExceptionOr<void> set_width(unsigned);
+    WebIDL::ExceptionOr<void> set_height(unsigned);
 
-    String to_data_url(String const& type, Optional<double> quality) const;
+    String to_data_url(StringView type, Optional<double> quality);
+    WebIDL::ExceptionOr<void> to_blob(JS::NonnullGCPtr<WebIDL::CallbackType> callback, StringView type, Optional<double> quality);
 
     void present();
 
 private:
     HTMLCanvasElement(DOM::Document&, DOM::QualifiedName);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+
+    virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
 
     virtual JS::GCPtr<Layout::Node> create_layout_node(NonnullRefPtr<CSS::StyleProperties>) override;
 

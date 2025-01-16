@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2022, the SerenityOS developers.
- * Copyright (c) 2021-2022, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,7 +12,7 @@
 #include <AK/Vector.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/CSS/Parser/Tokenizer.h>
-#include <math.h>
+#include <LibWeb/Infra/Strings.h>
 
 namespace Web::CSS::Parser {
 
@@ -195,18 +195,32 @@ static inline bool is_E(u32 code_point)
     return code_point == 0x45;
 }
 
-Tokenizer::Tokenizer(StringView input, String const& encoding)
+Vector<Token> Tokenizer::tokenize(StringView input, StringView encoding)
 {
     // https://www.w3.org/TR/css-syntax-3/#css-filter-code-points
-    auto filter_code_points = [](StringView input, auto const& encoding) -> String {
-        auto* decoder = TextCodec::decoder_for(encoding);
-        VERIFY(decoder);
+    auto filter_code_points = [](StringView input, auto encoding) -> String {
+        auto decoder = TextCodec::decoder_for(encoding);
+        VERIFY(decoder.has_value());
+
+        auto decoded_input = MUST(decoder->to_utf8(input));
+
+        // OPTIMIZATION: If the input doesn't contain any CR or FF, we can skip the filtering
+        bool const contains_cr_or_ff = [&] {
+            for (auto byte : decoded_input.bytes()) {
+                if (byte == '\r' || byte == '\f')
+                    return true;
+            }
+            return false;
+        }();
+        if (!contains_cr_or_ff) {
+            return decoded_input;
+        }
 
         StringBuilder builder { input.length() };
         bool last_was_carriage_return = false;
 
         // To filter code points from a stream of (unfiltered) code points input:
-        decoder->process(input, [&builder, &last_was_carriage_return](u32 code_point) {
+        for (auto code_point : decoded_input.code_points()) {
             // Replace any U+000D CARRIAGE RETURN (CR) code points,
             // U+000C FORM FEED (FF) code points,
             // or pairs of U+000D CARRIAGE RETURN (CR) followed by U+000A LINE FEED (LF)
@@ -236,16 +250,22 @@ Tokenizer::Tokenizer(StringView input, String const& encoding)
 
                 last_was_carriage_return = false;
             }
-        });
-        return builder.to_string();
+        }
+        return builder.to_string_without_validation();
     };
 
-    m_decoded_input = filter_code_points(input, encoding);
-    m_utf8_view = Utf8View(m_decoded_input);
-    m_utf8_iterator = m_utf8_view.begin();
+    Tokenizer tokenizer { filter_code_points(input, encoding) };
+    return tokenizer.tokenize();
 }
 
-Vector<Token> Tokenizer::parse()
+Tokenizer::Tokenizer(String decoded_input)
+    : m_decoded_input(move(decoded_input))
+    , m_utf8_view(m_decoded_input)
+    , m_utf8_iterator(m_utf8_view.begin())
+{
+}
+
+Vector<Token> Tokenizer::tokenize()
 {
     Vector<Token> tokens;
     for (;;) {
@@ -352,22 +372,19 @@ Token Tokenizer::create_eof_token()
     return create_new_token(Token::Type::EndOfFile);
 }
 
-Token Tokenizer::create_value_token(Token::Type type, String value)
+Token Tokenizer::create_value_token(Token::Type type, FlyString&& value, String&& representation)
 {
-    Token token;
-    token.m_type = type;
+    auto token = create_new_token(type);
     token.m_value = move(value);
+    token.m_original_source_text = move(representation);
     return token;
 }
 
-Token Tokenizer::create_value_token(Token::Type type, u32 value)
+Token Tokenizer::create_value_token(Token::Type type, u32 value, String&& representation)
 {
-    Token token = {};
-    token.m_type = type;
-    // FIXME: Avoid temporary StringBuilder here
-    StringBuilder builder;
-    builder.append_code_point(value);
-    token.m_value = builder.to_string();
+    auto token = create_new_token(type);
+    token.m_value = String::from_code_point(value);
+    token.m_original_source_text = move(representation);
     return token;
 }
 
@@ -400,7 +417,7 @@ u32 Tokenizer::consume_escaped_code_point()
         }
 
         // Interpret the hex digits as a hexadecimal number.
-        auto unhexed = strtoul(builder.to_string().characters(), nullptr, 16);
+        auto unhexed = AK::StringUtils::convert_to_uint_from_hex<u32>(builder.string_view()).value_or(0);
         // If this number is zero, or is for a surrogate, or is greater than the maximum allowed
         // code point, return U+FFFD REPLACEMENT CHARACTER (�).
         if (unhexed == 0 || is_unicode_surrogate(unhexed) || is_greater_than_maximum_allowed_code_point(unhexed)) {
@@ -430,11 +447,12 @@ Token Tokenizer::consume_an_ident_like_token()
     // It returns an <ident-token>, <function-token>, <url-token>, or <bad-url-token>.
 
     // Consume an ident sequence, and let string be the result.
+    auto start_byte_offset = current_byte_offset();
     auto string = consume_an_ident_sequence();
 
     // If string’s value is an ASCII case-insensitive match for "url", and the next input code
     // point is U+0028 LEFT PARENTHESIS ((), consume it.
-    if (string.equals_ignoring_case("url"sv) && is_left_paren(peek_code_point())) {
+    if (Infra::is_ascii_case_insensitive_match(string, "url"sv) && is_left_paren(peek_code_point())) {
         (void)next_code_point();
 
         // While the next two input code points are whitespace, consume the next input code point.
@@ -452,7 +470,7 @@ Token Tokenizer::consume_an_ident_like_token()
         // <function-token> with its value set to string and return it.
         auto next_two = peek_twin();
         if (is_quotation_mark(next_two.first) || is_apostrophe(next_two.first) || (is_whitespace(next_two.first) && (is_quotation_mark(next_two.second) || is_apostrophe(next_two.second)))) {
-            return create_value_token(Token::Type::Function, string);
+            return create_value_token(Token::Type::Function, move(string), input_since(start_byte_offset));
         }
 
         // Otherwise, consume a url token, and return it.
@@ -464,11 +482,11 @@ Token Tokenizer::consume_an_ident_like_token()
         (void)next_code_point();
 
         // Create a <function-token> with its value set to string and return it.
-        return create_value_token(Token::Type::Function, string);
+        return create_value_token(Token::Type::Function, move(string), input_since(start_byte_offset));
     }
 
     // Otherwise, create an <ident-token> with its value set to string and return it.
-    return create_value_token(Token::Type::Ident, string);
+    return create_value_token(Token::Type::Ident, move(string), input_since(start_byte_offset));
 }
 
 // https://www.w3.org/TR/css-syntax-3/#consume-number
@@ -530,10 +548,11 @@ Number Tokenizer::consume_a_number()
     // U+0065 LATIN SMALL LETTER E (e), optionally followed by U+002D HYPHEN-MINUS (-)
     // or U+002B PLUS SIGN (+), followed by a digit, then:
     auto maybe_exp = peek_triplet();
-    if (is_E(maybe_exp.first) || is_e(maybe_exp.first)) {
+    if ((is_E(maybe_exp.first) || is_e(maybe_exp.first))
+        && (((is_plus_sign(maybe_exp.second) || is_hyphen_minus(maybe_exp.second)) && is_ascii_digit(maybe_exp.third))
+            || (is_ascii_digit(maybe_exp.second)))) {
         // 1. Consume them.
         // 2. Append them to repr.
-        // FIXME: These conditions should be part of step 5 above.
         if (is_plus_sign(maybe_exp.second) || is_hyphen_minus(maybe_exp.second)) {
             if (is_ascii_digit(maybe_exp.third)) {
                 repr.append_code_point(next_code_point());
@@ -568,15 +587,15 @@ Number Tokenizer::consume_a_number()
 }
 
 // https://www.w3.org/TR/css-syntax-3/#convert-string-to-number
-float Tokenizer::convert_a_string_to_a_number(StringView string)
+double Tokenizer::convert_a_string_to_a_number(StringView string)
 {
     // FIXME: We already found the whole part, fraction part and exponent during
     //        validation, we could probably skip
-    return string.to_float(AK::TrimWhitespace::No).release_value();
+    return string.to_number<double>(AK::TrimWhitespace::No).release_value();
 }
 
 // https://www.w3.org/TR/css-syntax-3/#consume-name
-String Tokenizer::consume_an_ident_sequence()
+FlyString Tokenizer::consume_an_ident_sequence()
 {
     // This section describes how to consume an ident sequence from a stream of code points.
     // It returns a string containing the largest name that can be formed from adjacent
@@ -617,7 +636,7 @@ String Tokenizer::consume_an_ident_sequence()
         break;
     }
 
-    return result.to_string();
+    return result.to_fly_string_without_validation();
 }
 
 // https://www.w3.org/TR/css-syntax-3/#consume-url-token
@@ -633,14 +652,16 @@ Token Tokenizer::consume_a_url_token()
     // shouldn’t be called directly otherwise.
 
     // 1. Initially create a <url-token> with its value set to the empty string.
+    auto start_byte_offset = current_byte_offset();
     auto token = create_new_token(Token::Type::Url);
     StringBuilder builder;
 
     // 2. Consume as much whitespace as possible.
     consume_as_much_whitespace_as_possible();
 
-    auto make_token = [&]() {
-        token.m_value = builder.to_string();
+    auto make_token = [&]() -> Token {
+        token.m_value = builder.to_fly_string_without_validation();
+        token.m_original_source_text = input_since(start_byte_offset);
         return token;
     };
 
@@ -683,7 +704,9 @@ Token Tokenizer::consume_a_url_token()
 
             // otherwise, consume the remnants of a bad url, create a <bad-url-token>, and return it.
             consume_the_remnants_of_a_bad_url();
-            return create_new_token(Token::Type::BadUrl);
+            auto bad_url_token = create_new_token(Token::Type::BadUrl);
+            bad_url_token.m_original_source_text = input_since(start_byte_offset);
+            return bad_url_token;
         }
 
         // U+0022 QUOTATION MARK (")
@@ -694,7 +717,9 @@ Token Tokenizer::consume_a_url_token()
             // This is a parse error. Consume the remnants of a bad url, create a <bad-url-token>, and return it.
             log_parse_error();
             consume_the_remnants_of_a_bad_url();
-            return create_new_token(Token::Type::BadUrl);
+            auto bad_url_token = create_new_token(Token::Type::BadUrl);
+            bad_url_token.m_original_source_text = input_since(start_byte_offset);
+            return bad_url_token;
         }
 
         // U+005C REVERSE SOLIDUS (\)
@@ -709,7 +734,9 @@ Token Tokenizer::consume_a_url_token()
                 log_parse_error();
                 // Consume the remnants of a bad url, create a <bad-url-token>, and return it.
                 consume_the_remnants_of_a_bad_url();
-                return create_new_token(Token::Type::BadUrl);
+                auto bad_url_token = create_new_token(Token::Type::BadUrl);
+                bad_url_token.m_original_source_text = input_since(start_byte_offset);
+                return bad_url_token;
             }
         }
 
@@ -770,6 +797,8 @@ Token Tokenizer::consume_a_numeric_token()
     // This section describes how to consume a numeric token from a stream of code points.
     // It returns either a <number-token>, <percentage-token>, or <dimension-token>.
 
+    auto start_byte_offset = current_byte_offset();
+
     // Consume a number and let number be the result.
     auto number = consume_a_number();
 
@@ -787,6 +816,7 @@ Token Tokenizer::consume_a_numeric_token()
         token.m_value = move(unit);
 
         // 3. Return the <dimension-token>.
+        token.m_original_source_text = input_since(start_byte_offset);
         return token;
     }
 
@@ -797,12 +827,14 @@ Token Tokenizer::consume_a_numeric_token()
         // Create a <percentage-token> with the same value as number, and return it.
         auto token = create_new_token(Token::Type::Percentage);
         token.m_number_value = number;
+        token.m_original_source_text = input_since(start_byte_offset);
         return token;
     }
 
     // Otherwise, create a <number-token> with the same value and type flag as number, and return it.
     auto token = create_new_token(Token::Type::Number);
     token.m_number_value = number;
+    token.m_original_source_text = input_since(start_byte_offset);
     return token;
 }
 
@@ -927,11 +959,13 @@ Token Tokenizer::consume_string_token(u32 ending_code_point)
     // code point is used.
 
     // Initially create a <string-token> with its value set to the empty string.
+    auto start_byte_offset = current_byte_offset();
     auto token = create_new_token(Token::Type::String);
     StringBuilder builder;
 
-    auto make_token = [&]() {
-        token.m_value = builder.to_string();
+    auto make_token = [&]() -> Token {
+        token.m_value = builder.to_fly_string_without_validation();
+        token.m_original_source_text = input_since(start_byte_offset);
         return token;
     };
 
@@ -955,7 +989,9 @@ Token Tokenizer::consume_string_token(u32 ending_code_point)
             // This is a parse error. Reconsume the current input code point, create a
             // <bad-string-token>, and return it.
             reconsume_current_input_code_point();
-            return create_new_token(Token::Type::BadString);
+            auto bad_string_token = create_new_token(Token::Type::BadString);
+            bad_string_token.m_original_source_text = input_since(start_byte_offset);
+            return bad_string_token;
         }
 
         // U+005C REVERSE SOLIDUS (\)
@@ -1028,8 +1064,18 @@ Token Tokenizer::consume_a_token()
     // This section describes how to consume a token from a stream of code points.
     // It will return a single token of any type.
 
+    auto start_byte_offset = current_byte_offset();
+
     // Consume comments.
     consume_comments();
+
+    // AD-HOC: Preserve comments as whitespace tokens, for serializing custom properties.
+    auto after_comments_byte_offset = current_byte_offset();
+    if (after_comments_byte_offset != start_byte_offset) {
+        auto token = create_new_token(Token::Type::Whitespace);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
+    }
 
     // Consume the next input code point.
     auto input = next_code_point();
@@ -1039,7 +1085,9 @@ Token Tokenizer::consume_a_token()
         dbgln_if(CSS_TOKENIZER_DEBUG, "is whitespace");
         // Consume as much whitespace as possible. Return a <whitespace-token>.
         consume_as_much_whitespace_as_possible();
-        return create_new_token(Token::Type::Whitespace);
+        auto token = create_new_token(Token::Type::Whitespace);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+0022 QUOTATION MARK (")
@@ -1072,11 +1120,12 @@ Token Tokenizer::consume_a_token()
             token.m_value = move(name);
 
             // 4. Return the <hash-token>.
+            token.m_original_source_text = input_since(start_byte_offset);
             return token;
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+0027 APOSTROPHE (')
@@ -1090,14 +1139,18 @@ Token Tokenizer::consume_a_token()
     if (is_left_paren(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is left paren");
         // Return a <(-token>.
-        return create_new_token(Token::Type::OpenParen);
+        Token token = create_new_token(Token::Type::OpenParen);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+0029 RIGHT PARENTHESIS ())
     if (is_right_paren(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is right paren");
         // Return a <)-token>.
-        return create_new_token(Token::Type::CloseParen);
+        Token token = create_new_token(Token::Type::CloseParen);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+002B PLUS SIGN (+)
@@ -1111,14 +1164,16 @@ Token Tokenizer::consume_a_token()
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+002C COMMA (,)
     if (is_comma(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is comma");
         // Return a <comma-token>.
-        return create_new_token(Token::Type::Comma);
+        Token token = create_new_token(Token::Type::Comma);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+002D HYPHEN-MINUS (-)
@@ -1138,7 +1193,9 @@ Token Tokenizer::consume_a_token()
             (void)next_code_point();
             (void)next_code_point();
 
-            return create_new_token(Token::Type::CDC);
+            Token token = create_new_token(Token::Type::CDC);
+            token.m_original_source_text = input_since(start_byte_offset);
+            return token;
         }
 
         // Otherwise, if the input stream starts with an identifier, reconsume the current
@@ -1149,7 +1206,7 @@ Token Tokenizer::consume_a_token()
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+002E FULL STOP (.)
@@ -1163,21 +1220,25 @@ Token Tokenizer::consume_a_token()
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+003A COLON (:)
     if (is_colon(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is colon");
         // Return a <colon-token>.
-        return create_new_token(Token::Type::Colon);
+        Token token = create_new_token(Token::Type::Colon);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+003B SEMICOLON (;)
     if (is_semicolon(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is semicolon");
         // Return a <semicolon-token>.
-        return create_new_token(Token::Type::Semicolon);
+        Token token = create_new_token(Token::Type::Semicolon);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+003C LESS-THAN SIGN (<)
@@ -1191,11 +1252,13 @@ Token Tokenizer::consume_a_token()
             (void)next_code_point();
             (void)next_code_point();
 
-            return create_new_token(Token::Type::CDO);
+            Token token = create_new_token(Token::Type::CDO);
+            token.m_original_source_text = input_since(start_byte_offset);
+            return token;
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+0040 COMMERCIAL AT (@)
@@ -1205,18 +1268,20 @@ Token Tokenizer::consume_a_token()
         // an <at-keyword-token> with its value set to the returned value, and return it.
         if (would_start_an_ident_sequence(peek_triplet())) {
             auto name = consume_an_ident_sequence();
-            return create_value_token(Token::Type::AtKeyword, name);
+            return create_value_token(Token::Type::AtKeyword, move(name), input_since(start_byte_offset));
         }
 
         // Otherwise, return a <delim-token> with its value set to the current input code point.
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+005B LEFT SQUARE BRACKET ([)
     if (is_open_square_bracket(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is open square");
         // Return a <[-token>.
-        return create_new_token(Token::Type::OpenSquare);
+        Token token = create_new_token(Token::Type::OpenSquare);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+005C REVERSE SOLIDUS (\)
@@ -1232,28 +1297,34 @@ Token Tokenizer::consume_a_token()
         // Otherwise, this is a parse error. Return a <delim-token> with its value set to the
         // current input code point.
         log_parse_error();
-        return create_value_token(Token::Type::Delim, input);
+        return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
     }
 
     // U+005D RIGHT SQUARE BRACKET (])
     if (is_closed_square_bracket(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is closed square");
         // Return a <]-token>.
-        return create_new_token(Token::Type::CloseSquare);
+        Token token = create_new_token(Token::Type::CloseSquare);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+007B LEFT CURLY BRACKET ({)
     if (is_open_curly_bracket(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is open curly");
         // Return a <{-token>.
-        return create_new_token(Token::Type::OpenCurly);
+        Token token = create_new_token(Token::Type::OpenCurly);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // U+007D RIGHT CURLY BRACKET (})
     if (is_closed_curly_bracket(input)) {
         dbgln_if(CSS_TOKENIZER_DEBUG, "is closed curly");
         // Return a <}-token>.
-        return create_new_token(Token::Type::CloseCurly);
+        Token token = create_new_token(Token::Type::CloseCurly);
+        token.m_original_source_text = input_since(start_byte_offset);
+        return token;
     }
 
     // digit
@@ -1275,13 +1346,23 @@ Token Tokenizer::consume_a_token()
     // EOF
     if (is_eof(input)) {
         // Return an <EOF-token>.
-        return create_new_token(Token::Type::EndOfFile);
+        return create_eof_token();
     }
 
     // anything else
     dbgln_if(CSS_TOKENIZER_DEBUG, "is delimiter");
     // Return a <delim-token> with its value set to the current input code point.
-    return create_value_token(Token::Type::Delim, input);
+    return create_value_token(Token::Type::Delim, input, input_since(start_byte_offset));
+}
+
+size_t Tokenizer::current_byte_offset() const
+{
+    return m_utf8_iterator.ptr() - m_utf8_view.bytes();
+}
+
+String Tokenizer::input_since(size_t offset) const
+{
+    return MUST(m_decoded_input.substring_from_byte_offset_with_shared_superstring(offset, current_byte_offset() - offset));
 }
 
 }

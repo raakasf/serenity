@@ -29,6 +29,8 @@ public:
     float alpha_scale() const { return m_alpha_scale; }
     void set_alpha_source(size_t index, GLenum source) { m_alpha_source[index] = source; }
     GLenum alpha_source(size_t index) const { return m_alpha_source[index]; }
+    void set_color(FloatVector4 color) { m_color = color; }
+    FloatVector4 color() const { return m_color; }
     void set_env_mode(GLenum mode) { m_env_mode = mode; }
     GLenum env_mode() const { return m_env_mode; }
     void set_level_of_detail_bias(float bias) { m_level_of_detail_bias = bias; }
@@ -42,13 +44,13 @@ public:
     void set_rgb_source(size_t index, GLenum source) { m_rgb_source[index] = source; }
     GLenum rgb_source(size_t index) const { return m_rgb_source[index]; }
 
-    bool texture_1d_enabled() const { return m_texture_1d_enabled; };
+    bool texture_1d_enabled() const { return m_texture_1d_enabled; }
     void set_texture_1d_enabled(bool texture_1d_enabled) { m_texture_1d_enabled = texture_1d_enabled; }
-    bool texture_2d_enabled() const { return m_texture_2d_enabled; };
+    bool texture_2d_enabled() const { return m_texture_2d_enabled; }
     void set_texture_2d_enabled(bool texture_2d_enabled) { m_texture_2d_enabled = texture_2d_enabled; }
-    bool texture_3d_enabled() const { return m_texture_3d_enabled; };
+    bool texture_3d_enabled() const { return m_texture_3d_enabled; }
     void set_texture_3d_enabled(bool texture_3d_enabled) { m_texture_3d_enabled = texture_3d_enabled; }
-    bool texture_cube_map_enabled() const { return m_texture_cube_map_enabled; };
+    bool texture_cube_map_enabled() const { return m_texture_cube_map_enabled; }
     void set_texture_cube_map_enabled(bool texture_cube_map_enabled) { m_texture_cube_map_enabled = texture_cube_map_enabled; }
 
     FloatMatrix4x4& texture_matrix() { return m_texture_matrix_stack.last(); }
@@ -59,6 +61,7 @@ private:
     Array<GLenum, 3> m_alpha_operand { GL_SRC_ALPHA, GL_SRC_ALPHA, GL_SRC_ALPHA };
     float m_alpha_scale { 1.f };
     Array<GLenum, 3> m_alpha_source { GL_TEXTURE, GL_PREVIOUS, GL_CONSTANT };
+    FloatVector4 m_color { 0.f, 0.f, 0.f, 0.f };
     GLenum m_env_mode { GL_MODULATE };
     float m_level_of_detail_bias { 0.f };
     GLenum m_rgb_combinator { GL_MODULATE };

@@ -12,13 +12,14 @@ namespace JS {
 
 class FunctionPrototype final : public FunctionObject {
     JS_OBJECT(FunctionPrototype, FunctionObject);
+    JS_DECLARE_ALLOCATOR(FunctionPrototype);
 
 public:
     virtual void initialize(Realm&) override;
     virtual ~FunctionPrototype() override = default;
 
-    virtual ThrowCompletionOr<Value> internal_call(Value this_argument, MarkedVector<Value> arguments_list) override;
-    virtual FlyString const& name() const override { return m_name; }
+    virtual ThrowCompletionOr<Value> internal_call(Value this_argument, ReadonlySpan<Value> arguments_list) override;
+    virtual DeprecatedFlyString const& name() const override { return m_name; }
 
 private:
     explicit FunctionPrototype(Realm&);
@@ -31,7 +32,7 @@ private:
 
     // Totally unnecessary, but sadly still necessary.
     // TODO: Get rid of the pointless name() method.
-    FlyString m_name { "FunctionPrototype" };
+    DeprecatedFlyString m_name { "FunctionPrototype" };
 };
 
 }

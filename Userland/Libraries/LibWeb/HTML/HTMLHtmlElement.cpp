@@ -4,18 +4,27 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLHtmlElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/HTMLHtmlElement.h>
+#include <LibWeb/Layout/Node.h>
 
 namespace Web::HTML {
+
+JS_DEFINE_ALLOCATOR(HTMLHtmlElement);
 
 HTMLHtmlElement::HTMLHtmlElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
-    set_prototype(&Bindings::cached_web_prototype(realm(), "HTMLHtmlElement"));
 }
 
 HTMLHtmlElement::~HTMLHtmlElement() = default;
+
+void HTMLHtmlElement::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLHtmlElement);
+}
 
 bool HTMLHtmlElement::should_use_body_background_properties() const
 {

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
- * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
+ * Copyright (c) 2022-2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -26,15 +26,17 @@
 #include <LibGPU/TextureUnitConfiguration.h>
 #include <LibGPU/Vertex.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Matrix3x3.h>
 #include <LibGfx/Matrix4x4.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/Vector4.h>
-#include <LibSoftGPU/AlphaBlendFactors.h>
 #include <LibSoftGPU/Buffer/FrameBuffer.h>
 #include <LibSoftGPU/Buffer/Typed2DBuffer.h>
 #include <LibSoftGPU/Clipper.h>
 #include <LibSoftGPU/Config.h>
 #include <LibSoftGPU/Sampler.h>
+#include <LibSoftGPU/Shader.h>
+#include <LibSoftGPU/ShaderProcessor.h>
 #include <LibSoftGPU/Triangle.h>
 
 namespace SoftGPU {
@@ -43,12 +45,12 @@ struct PixelQuad;
 
 class Device final : public GPU::Device {
 public:
-    Device(Gfx::IntSize const& min_size);
+    Device(Gfx::IntSize min_size);
 
     virtual GPU::DeviceInfo info() const override;
 
-    virtual void draw_primitives(GPU::PrimitiveType, FloatMatrix4x4 const& model_view_transform, FloatMatrix4x4 const& projection_transform, Vector<GPU::Vertex>& vertices) override;
-    virtual void resize(Gfx::IntSize const& min_size) override;
+    virtual void draw_primitives(GPU::PrimitiveType, Vector<GPU::Vertex>& vertices) override;
+    virtual void resize(Gfx::IntSize min_size) override;
     virtual void clear_color(FloatVector4 const&) override;
     virtual void clear_depth(GPU::DepthType) override;
     virtual void clear_stencil(GPU::StencilType) override;
@@ -65,7 +67,10 @@ public:
     virtual GPU::LightModelParameters light_model() const override { return m_lighting_model; }
 
     virtual NonnullRefPtr<GPU::Image> create_image(GPU::PixelFormat const&, u32 width, u32 height, u32 depth, u32 max_levels) override;
+    virtual ErrorOr<NonnullRefPtr<GPU::Shader>> create_shader(GPU::IR::Shader const&) override;
 
+    virtual void set_model_view_transform(FloatMatrix4x4 const&) override;
+    virtual void set_projection_transform(FloatMatrix4x4 const&) override;
     virtual void set_sampler_config(unsigned, GPU::SamplerConfig const&) override;
     virtual void set_light_state(unsigned, GPU::Light const&) override;
     virtual void set_material_state(GPU::Face, GPU::Material const&) override;
@@ -75,7 +80,9 @@ public:
 
     virtual GPU::RasterPosition raster_position() const override { return m_raster_position; }
     virtual void set_raster_position(GPU::RasterPosition const& raster_position) override;
-    virtual void set_raster_position(FloatVector4 const& position, FloatMatrix4x4 const& model_view_transform, FloatMatrix4x4 const& projection_transform) override;
+    virtual void set_raster_position(FloatVector4 const& position) override;
+
+    virtual void bind_fragment_shader(RefPtr<GPU::Shader>) override;
 
 private:
     void calculate_vertex_lighting(GPU::Vertex& vertex) const;
@@ -97,24 +104,29 @@ private:
     void rasterize_point(GPU::Vertex&);
 
     void rasterize_triangle(Triangle&);
-    void setup_blend_factors();
     void shade_fragments(PixelQuad&);
 
     RefPtr<FrameBuffer<GPU::ColorType, GPU::DepthType, GPU::StencilType>> m_frame_buffer {};
     GPU::RasterizerOptions m_options;
+    FloatMatrix4x4 m_model_view_transform;
+    FloatMatrix3x3 m_normal_transform;
+    FloatMatrix4x4 m_projection_transform;
     GPU::LightModelParameters m_lighting_model;
     Clipper m_clipper;
     Vector<Triangle> m_triangle_list;
     Vector<Triangle> m_processed_triangles;
     Vector<GPU::Vertex> m_clipped_vertices;
+    float m_one_over_fog_depth;
     Array<Sampler, GPU::NUM_TEXTURE_UNITS> m_samplers;
-    AlphaBlendFactors m_alpha_blend_factors;
+    bool m_samplers_need_texture_staging { false };
     Array<GPU::Light, NUM_LIGHTS> m_lights;
     Array<GPU::Material, 2u> m_materials;
     GPU::RasterPosition m_raster_position;
     Vector<FloatVector4> m_clip_planes;
     Array<GPU::StencilConfiguration, 2u> m_stencil_configuration;
     Array<GPU::TextureUnitConfiguration, GPU::NUM_TEXTURE_UNITS> m_texture_unit_configuration;
+    RefPtr<Shader> m_current_fragment_shader;
+    ShaderProcessor m_shader_processor;
 };
 
 }

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/AST.h>
 #include <LibJS/Runtime/DeclarativeEnvironment.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -41,7 +40,7 @@ ThrowCompletionOr<void> Reference::put_value(VM& vm, Value value)
     // 5. If IsPropertyReference(V) is true, then
     if (is_property_reference()) {
         // a. Let baseObj be ? ToObject(V.[[Base]]).
-        auto* base_obj = TRY(m_base_value.to_object(vm));
+        auto base_obj = TRY(m_base_value.to_object(vm));
 
         // b. If IsPrivateReference(V) is true, then
         if (is_private_reference()) {
@@ -106,16 +105,16 @@ ThrowCompletionOr<Value> Reference::get_value(VM& vm) const
             // as things currently stand this does the "wrong thing" but
             // the error is unobservable
 
-            auto* base_obj = TRY(m_base_value.to_object(vm));
+            auto base_obj = TRY(m_base_value.to_object(vm));
 
             // i. Return ? PrivateGet(baseObj, V.[[ReferencedName]]).
             return base_obj->private_get(m_private_name);
         }
 
         // OPTIMIZATION: For various primitives we can avoid actually creating a new object for them.
-        Object* base_obj = nullptr;
+        GCPtr<Object> base_obj;
         if (m_base_value.is_string()) {
-            auto string_value = m_base_value.as_string().get(vm, m_name);
+            auto string_value = TRY(m_base_value.as_string().get(vm, m_name));
             if (string_value.has_value())
                 return *string_value;
             base_obj = realm.intrinsics().string_prototype();
@@ -123,6 +122,10 @@ ThrowCompletionOr<Value> Reference::get_value(VM& vm) const
             base_obj = realm.intrinsics().number_prototype();
         else if (m_base_value.is_boolean())
             base_obj = realm.intrinsics().boolean_prototype();
+        else if (m_base_value.is_bigint())
+            base_obj = realm.intrinsics().bigint_prototype();
+        else if (m_base_value.is_symbol())
+            base_obj = realm.intrinsics().symbol_prototype();
         else
             base_obj = TRY(m_base_value.to_object(vm));
 
@@ -139,7 +142,7 @@ ThrowCompletionOr<Value> Reference::get_value(VM& vm) const
 
     // c. Return ? base.GetBindingValue(V.[[ReferencedName]], V.[[Strict]]) (see 9.1).
     if (m_environment_coordinate.has_value())
-        return static_cast<DeclarativeEnvironment*>(m_base_environment)->get_binding_value_direct(vm, m_environment_coordinate->index, m_strict);
+        return static_cast<DeclarativeEnvironment*>(m_base_environment)->get_binding_value_direct(vm, m_environment_coordinate->index);
     return m_base_environment->get_binding_value(vm, m_name.as_string(), m_strict);
 }
 
@@ -171,8 +174,8 @@ ThrowCompletionOr<bool> Reference::delete_(VM& vm)
         if (is_super_reference())
             return vm.throw_completion<ReferenceError>(ErrorType::UnsupportedDeleteSuperProperty);
 
-        // c. Let baseObj be ! ToObject(ref.[[Base]]).
-        auto* base_obj = MUST(m_base_value.to_object(vm));
+        // c. Let baseObj be ? ToObject(ref.[[Base]]).
+        auto base_obj = TRY(m_base_value.to_object(vm));
 
         // d. Let deleteStatus be ? baseObj.[[Delete]](ref.[[ReferencedName]]).
         bool delete_status = TRY(base_obj->internal_delete(m_name));
@@ -195,55 +198,20 @@ ThrowCompletionOr<bool> Reference::delete_(VM& vm)
     return m_base_environment->delete_binding(vm, m_name.as_string());
 }
 
-String Reference::to_string() const
-{
-    StringBuilder builder;
-    builder.append("Reference { Base="sv);
-    switch (m_base_type) {
-    case BaseType::Unresolvable:
-        builder.append("Unresolvable"sv);
-        break;
-    case BaseType::Environment:
-        builder.appendff("{}", base_environment().class_name());
-        break;
-    case BaseType::Value:
-        if (m_base_value.is_empty())
-            builder.append("<empty>"sv);
-        else
-            builder.appendff("{}", m_base_value.to_string_without_side_effects());
-        break;
-    }
-    builder.append(", ReferencedName="sv);
-    if (!m_name.is_valid())
-        builder.append("<invalid>"sv);
-    else if (m_name.is_symbol())
-        builder.appendff("{}", m_name.as_symbol()->to_string());
-    else
-        builder.appendff("{}", m_name.to_string());
-    builder.appendff(", Strict={}", m_strict);
-    builder.appendff(", ThisValue=");
-    if (m_this_value.is_empty())
-        builder.append("<empty>"sv);
-    else
-        builder.appendff("{}", m_this_value.to_string_without_side_effects());
-
-    builder.append(" }"sv);
-    return builder.to_string();
-}
-
 // 6.2.4.8 InitializeReferencedBinding ( V, W ), https://tc39.es/ecma262/#sec-object.prototype.hasownproperty
-ThrowCompletionOr<void> Reference::initialize_referenced_binding(VM& vm, Value value) const
+// 1.2.1.1 InitializeReferencedBinding ( V, W, hint ), https://tc39.es/proposal-explicit-resource-management/#sec-initializereferencedbinding
+ThrowCompletionOr<void> Reference::initialize_referenced_binding(VM& vm, Value value, Environment::InitializeBindingHint hint) const
 {
     VERIFY(!is_unresolvable());
     VERIFY(m_base_type == BaseType::Environment);
-    return m_base_environment->initialize_binding(vm, m_name.as_string(), value);
+    return m_base_environment->initialize_binding(vm, m_name.as_string(), value, hint);
 }
 
 // 6.2.4.9 MakePrivateReference ( baseValue, privateIdentifier ), https://tc39.es/ecma262/#sec-makeprivatereference
-Reference make_private_reference(VM& vm, Value base_value, FlyString const& private_identifier)
+Reference make_private_reference(VM& vm, Value base_value, DeprecatedFlyString const& private_identifier)
 {
     // 1. Let privEnv be the running execution context's PrivateEnvironment.
-    auto* private_environment = vm.running_execution_context().private_environment;
+    auto private_environment = vm.running_execution_context().private_environment;
 
     // 2. Assert: privEnv is not null.
     VERIFY(private_environment);

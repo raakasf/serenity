@@ -241,7 +241,7 @@ struct alignas(16) TransferDescriptor final {
 
 private:
     u32 m_link_ptr;                // Points to another Queue Head or Transfer Descriptor
-    volatile u32 m_control_status; // Control and status field
+    u32 volatile m_control_status; // Control and status field
     u32 m_token;                   // Contains all information required to fill in a USB Start Token
     u32 m_buffer_ptr;              // Points to a data buffer for this transaction (i.e what we want to send or recv)
 
@@ -356,9 +356,18 @@ struct alignas(16) QueueHead {
         m_bookkeeping->in_use = false;
     }
 
+    void reinitialize()
+    {
+
+        for (TransferDescriptor* iter = get_first_td(); iter != nullptr; iter = iter->next_td()) {
+            iter->set_active();
+        }
+        attach_transfer_descriptor_chain(get_first_td());
+    }
+
 private:
     u32 m_link_ptr { 0 };                  // Pointer to the next horizontal object that the controller will execute after this one
-    volatile u32 m_element_link_ptr { 0 }; // Pointer to the first data object in the queue (can be modified by hw)
+    u32 volatile m_element_link_ptr { 0 }; // Pointer to the first data object in the queue (can be modified by hw)
 
     // This structure pointer will be ignored by the controller, but we can use it for configuration and bookkeeping
     QueueHeadBookkeeping* m_bookkeeping { nullptr };
@@ -366,4 +375,11 @@ private:
 };
 
 static_assert(AssertSize<QueueHead, 32>()); // Queue Head is always 8 Dwords
+
+struct AsyncTransferHandle {
+    NonnullLockRefPtr<Transfer> transfer;
+    QueueHead* qh;
+    u16 ms_poll_interval;
+};
+
 }

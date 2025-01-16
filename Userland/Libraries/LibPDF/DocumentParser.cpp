@@ -6,8 +6,8 @@
  */
 
 #include <AK/BitStream.h>
+#include <AK/Endian.h>
 #include <AK/MemoryStream.h>
-#include <AK/Tuple.h>
 #include <LibPDF/CommonNames.h>
 #include <LibPDF/Document.h>
 #include <LibPDF/DocumentParser.h>
@@ -20,57 +20,102 @@ DocumentParser::DocumentParser(Document* document, ReadonlyBytes bytes)
 {
 }
 
-PDFErrorOr<void> DocumentParser::initialize()
+PDFErrorOr<Version> DocumentParser::initialize()
 {
-    TRY(parse_header());
+    m_reader.set_reading_forwards();
+    if (m_reader.remaining() == 0)
+        return error("Empty PDF document");
+
+    auto maybe_version = parse_header();
+    if (maybe_version.is_error()) {
+        warnln("{}", maybe_version.error().message());
+        warnln("No valid PDF header detected, continuing anyway.");
+        maybe_version = Version { 1, 6 }; // ¯\_(ツ)_/¯
+    }
 
     auto const linearization_result = TRY(initialize_linearization_dict());
 
-    if (linearization_result == LinearizationResult::NotLinearized)
-        return initialize_non_linearized_xref_table();
+    if (linearization_result == LinearizationResult::NotLinearized) {
+        TRY(initialize_non_linearized_xref_table());
+        return maybe_version.value();
+    }
 
     bool is_linearized = m_linearization_dictionary.has_value();
     if (is_linearized) {
-        // The file may have been linearized at one point, but could have been updated afterwards,
-        // which means it is no longer a linearized PDF file.
+        // If the length given in the linearization dictionary is not equal to the length
+        // of the document, then this file has most likely been incrementally updated, and
+        // should no longer be treated as linearized.
+        // FIXME: This check requires knowing the full size of the file, while linearization
+        //        is all about being able to render some of it without having to download all of it.
+        //        PDF 2.0 Annex G.7 "Accessing an updated file" talks about this some,
+        //        but mostly just throws its hand in the air.
         is_linearized = m_linearization_dictionary.value().length_of_file == m_reader.bytes().size();
-
-        if (!is_linearized) {
-            // FIXME: The file shouldn't be treated as linearized, yet the xref tables are still
-            // split. This might take some tweaking to ensure correct behavior, which can be
-            // implemented later.
-            TODO();
-        }
     }
 
     if (is_linearized)
-        return initialize_linearized_xref_table();
+        TRY(initialize_linearized_xref_table());
+    else
+        TRY(initialize_non_linearized_xref_table());
 
-    return initialize_non_linearized_xref_table();
+    return maybe_version.value();
 }
 
 PDFErrorOr<Value> DocumentParser::parse_object_with_index(u32 index)
 {
     VERIFY(m_xref_table->has_object(index));
 
+    // PDF spec 1.7, Indirect Objects:
+    // "An indirect reference to an undefined object is not an error; it is simply treated as a reference to the null object."
+    // FIXME: Should this apply to the !has_object() case right above too?
+    if (!m_xref_table->is_object_in_use(index))
+        return nullptr;
+
+    // If this is called to resolve an indirect object reference while parsing another object,
+    // make sure to restore the current position after parsing the indirect object, so that the
+    // parser can keep parsing the original object stream afterwards.
+    // parse_compressed_object_with_index() also moves the reader's position, so this needs
+    // to be before the potential call to parse_compressed_object_with_index().
+    class SavePoint {
+    public:
+        SavePoint(Reader& reader)
+            : m_reader(reader)
+        {
+            m_reader.save();
+        }
+        ~SavePoint() { m_reader.load(); }
+
+    private:
+        Reader& m_reader;
+    };
+    SavePoint restore_current_position { m_reader };
+
     if (m_xref_table->is_object_compressed(index))
         // The object can be found in a object stream
         return parse_compressed_object_with_index(index);
 
     auto byte_offset = m_xref_table->byte_offset_for_object(index);
+
     m_reader.move_to(byte_offset);
     auto indirect_value = TRY(parse_indirect_value());
     VERIFY(indirect_value->index() == index);
     return indirect_value->value();
 }
 
-PDFErrorOr<void> DocumentParser::parse_header()
+PDFErrorOr<size_t> DocumentParser::scan_for_header_start(ReadonlyBytes bytes)
 {
-    // FIXME: Do something with the version?
-    m_reader.set_reading_forwards();
-    if (m_reader.remaining() == 0)
-        return error("Empty PDF document");
+    // PDF 1.7 spec, APPENDIX H, 3.4.1 "File Header":
+    // "13. Acrobat viewers require only that the header appear somewhere within the first 1024 bytes of the file."
+    // ...which of course means files depend on it.
+    // All offsets in the file are relative to the header start, not to the start of the file.
+    StringView first_bytes { bytes.data(), min(bytes.size(), 1024 - "1.4"sv.length()) };
+    Optional<size_t> start_offset = first_bytes.find("%PDF-"sv);
+    if (!start_offset.has_value())
+        return Error { Error::Type::Parse, "Failed to find PDF start" };
+    return start_offset.value();
+}
 
+PDFErrorOr<Version> DocumentParser::parse_header()
+{
     m_reader.move_to(0);
     if (m_reader.remaining() < 8 || !m_reader.matches("%PDF-"))
         return error("Not a PDF document");
@@ -78,17 +123,22 @@ PDFErrorOr<void> DocumentParser::parse_header()
     m_reader.move_by(5);
 
     char major_ver = m_reader.read();
-    if (major_ver != '1' && major_ver != '2')
-        return error(String::formatted("Unknown major version \"{}\"", major_ver));
+    if (major_ver != '1' && major_ver != '2') {
+        dbgln_if(PDF_DEBUG, "Unknown major version \"{}\"", major_ver);
+        return error("Unknown major version");
+    }
 
     if (m_reader.read() != '.')
         return error("Malformed PDF version");
 
     char minor_ver = m_reader.read();
-    if (minor_ver < '0' || minor_ver > '7')
-        return error(String::formatted("Unknown minor version \"{}\"", minor_ver));
+    if (minor_ver < '0' || minor_ver > '7') {
+        dbgln_if(PDF_DEBUG, "Unknown minor version \"{}\"", minor_ver);
+        return error("Unknown minor version");
+    }
 
     m_reader.consume_eol();
+    m_reader.consume_whitespace();
 
     // Parse optional high-byte comment, which signifies a binary file
     // FIXME: Do something with this?
@@ -101,14 +151,37 @@ PDFErrorOr<void> DocumentParser::parse_header()
         }
     }
 
-    return {};
+    return Version { major_ver - '0', minor_ver - '0' };
 }
 
 PDFErrorOr<DocumentParser::LinearizationResult> DocumentParser::initialize_linearization_dict()
 {
-    // parse_header() is called immediately before this, so we are at the right location
-    auto indirect_value = Value(*TRY(parse_indirect_value()));
-    auto dict_value = TRY(m_document->resolve(indirect_value));
+    // parse_header() is called immediately before this, so we are at the right location.
+    // There may not actually be a linearization dict, or even a valid PDF object here.
+    // If that is the case, this file may be completely valid but not linearized.
+
+    // If there is indeed a linearization dict, there should be an object number here.
+    if (!m_reader.matches_number())
+        return LinearizationResult::NotLinearized;
+
+    // At this point, we still don't know for sure if we are dealing with a valid object.
+
+    // The linearization dict is read before decryption state is initialized.
+    // A linearization dict only contains numbers, so the decryption dictionary is not been needed (only strings and streams get decrypted, and only streams get unfiltered).
+    // But we don't know if the first object is a linearization dictionary until after parsing it, so the object might be a stream.
+    // If that stream is encrypted and filtered, we'd try to unfilter it while it's still encrypted, handing encrypted data to the unfiltering algorithms.
+    // This makes them assert, since they can't make sense of the encrypted data.
+    // So read the first object without unfiltering.
+    // If it is a linearization dict, there's no stream data and this has no effect.
+    // If it is a stream, this isn't a linearized file and the object will be read on demand (and unfiltered) later, when the object is lazily read via an xref entry.
+    set_filters_enabled(false);
+    auto indirect_value_or_error = parse_indirect_value();
+    set_filters_enabled(true);
+
+    if (indirect_value_or_error.is_error())
+        return LinearizationResult::NotLinearized;
+
+    auto dict_value = indirect_value_or_error.value()->value();
     if (!dict_value.has<NonnullRefPtr<Object>>())
         return error("Expected linearization object to be a dictionary");
 
@@ -185,19 +258,17 @@ PDFErrorOr<void> DocumentParser::initialize_linearized_xref_table()
     // The linearization parameter dictionary has just been parsed, and the xref table
     // comes immediately after it. We are in the correct spot.
     m_xref_table = TRY(parse_xref_table());
-    if (!m_trailer)
-        m_trailer = TRY(parse_file_trailer());
 
     // Also parse the main xref table and merge into the first-page xref table. Note
     // that we don't use the main xref table offset from the linearization dict because
     // for some reason, it specified the offset of the whitespace after the object
     // index start and length? So it's much easier to do it this way.
-    auto main_xref_table_offset = m_trailer->get_value(CommonNames::Prev).to_int();
+    auto main_xref_table_offset = m_xref_table->trailer()->get_value(CommonNames::Prev).to_int();
     m_reader.move_to(main_xref_table_offset);
     auto main_xref_table = TRY(parse_xref_table());
     TRY(m_xref_table->merge(move(*main_xref_table)));
 
-    return {};
+    return validate_xref_table_and_fix_if_necessary();
 }
 
 PDFErrorOr<void> DocumentParser::initialize_hint_tables()
@@ -251,7 +322,7 @@ PDFErrorOr<void> DocumentParser::initialize_hint_tables()
     }
 
     auto hint_table = TRY(parse_page_offset_hint_table(hint_stream_bytes));
-    auto hint_table_entries = parse_all_page_offset_hint_table_entries(hint_table, hint_stream_bytes);
+    auto hint_table_entries = TRY(parse_all_page_offset_hint_table_entries(hint_table, hint_stream_bytes));
 
     // FIXME: Do something with the hint tables
     return {};
@@ -266,57 +337,135 @@ PDFErrorOr<void> DocumentParser::initialize_non_linearized_xref_table()
         return error("No xref");
 
     m_reader.set_reading_forwards();
-    auto xref_offset_value = parse_number();
-    if (xref_offset_value.is_error() || !xref_offset_value.value().has<int>())
-        return error("Invalid xref offset");
-    auto xref_offset = xref_offset_value.value().get<int>();
-
+    auto xref_offset_value = TRY(parse_number());
+    auto xref_offset = TRY(m_document->resolve_to<int>(xref_offset_value));
     m_reader.move_to(xref_offset);
-    m_xref_table = TRY(parse_xref_table());
-    if (!m_trailer)
-        m_trailer = TRY(parse_file_trailer());
+
+    // As per 7.5.6 Incremental Updates:
+    // When a conforming reader reads the file, it shall build its cross-reference
+    // information in such a way that the most recent copy of each object shall be
+    // the one accessed from the file.
+    // NOTE: This means that we have to follow back the chain of XRef table sections
+    //       and only add objects that were not already specified in a previous
+    //       (and thus newer) XRef section.
+    while (1) {
+        auto xref_table = TRY(parse_xref_table());
+        if (!m_xref_table)
+            m_xref_table = xref_table;
+        else
+            TRY(m_xref_table->merge(move(*xref_table)));
+
+        if (!xref_table->trailer() || !xref_table->trailer()->contains(CommonNames::Prev))
+            break;
+
+        auto offset = TRY(m_document->resolve_to<int>(xref_table->trailer()->get_value(CommonNames::Prev)));
+        m_reader.move_to(offset);
+    }
+
+    return validate_xref_table_and_fix_if_necessary();
+}
+
+PDFErrorOr<void> DocumentParser::validate_xref_table_and_fix_if_necessary()
+{
+    /* While an xref table may start with an object number other than zero, this is
+       very uncommon and likely a sign of a document with broken indices.
+       Like most other PDF parsers seem to do, we still try to salvage the situation.
+       NOTE: This is probably not spec-compliant behavior.*/
+    size_t first_valid_index = 0;
+    while (!m_xref_table->has_object(first_valid_index))
+        first_valid_index++;
+
+    if (first_valid_index) {
+        auto& entries = m_xref_table->entries();
+
+        bool need_to_rebuild_table = true;
+        for (size_t i = first_valid_index; i < entries.size(); ++i) {
+            if (!entries[i].in_use)
+                continue;
+
+            size_t actual_object_number = 0;
+            if (entries[i].compressed) {
+                auto object_stream_index = m_xref_table->object_stream_for_object(i);
+                auto stream_offset = m_xref_table->byte_offset_for_object(object_stream_index);
+                m_reader.move_to(stream_offset);
+                auto first_number = TRY(parse_number());
+                actual_object_number = first_number.get_u32();
+            } else {
+                auto byte_offset = m_xref_table->byte_offset_for_object(i);
+                m_reader.move_to(byte_offset);
+                auto indirect_value = TRY(parse_indirect_value());
+                actual_object_number = indirect_value->index();
+            }
+
+            if (actual_object_number != i - first_valid_index) {
+                /* Our suspicion was wrong, not all object numbers are shifted equally.
+                   This could mean that the document is hopelessly broken, or it just
+                   starts at a non-zero object index for some reason. */
+                need_to_rebuild_table = false;
+                break;
+            }
+        }
+
+        if (need_to_rebuild_table) {
+            warnln("Broken xref table detected, trying to fix it.");
+            entries.remove(0, first_valid_index);
+        }
+    }
+
     return {};
+}
+
+static PDFErrorOr<NonnullRefPtr<StreamObject>> indirect_value_as_stream(NonnullRefPtr<IndirectValue> indirect_value)
+{
+    auto value = indirect_value->value();
+    if (!value.has<NonnullRefPtr<Object>>())
+        return Error { Error::Type::Parse, "Expected indirect value to be a stream" };
+    auto value_object = value.get<NonnullRefPtr<Object>>();
+    if (!value_object->is<StreamObject>())
+        return Error { Error::Type::Parse, "Expected indirect value to be a stream" };
+    return value_object->cast<StreamObject>();
 }
 
 PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_stream()
 {
-    auto first_number = TRY(parse_number());
-    auto second_number = TRY(parse_number());
+    // PDF 1.7 spec, 3.4.7 "Cross-Reference Streams"
+    auto xref_stream = TRY(parse_indirect_value());
+    auto stream = TRY(indirect_value_as_stream(xref_stream));
 
-    if (!m_reader.matches("obj"))
-        return error("Malformed xref object");
-    m_reader.move_by(3);
-    if (m_reader.matches_eol())
-        m_reader.consume_eol();
-
-    auto dict = TRY(parse_dict());
+    auto dict = stream->dict();
     auto type = TRY(dict->get_name(m_document, CommonNames::Type))->name();
     if (type != "XRef")
         return error("Malformed xref dictionary");
 
-    auto field_sizes = TRY(dict->get_array(m_document, "W"));
+    auto field_sizes = TRY(dict->get_array(m_document, CommonNames::W));
     if (field_sizes->size() != 3)
         return error("Malformed xref dictionary");
+    if (field_sizes->at(1).get_u32() == 0)
+        return error("Malformed xref dictionary");
 
-    auto object_count = dict->get_value("Size").get<int>();
+    auto number_of_object_entries = dict->get_value("Size").get<int>();
 
-    Vector<Tuple<int, int>> subsection_indices;
+    struct Subsection {
+        int start;
+        int count;
+    };
+
+    Vector<Subsection> subsections;
     if (dict->contains(CommonNames::Index)) {
         auto index_array = TRY(dict->get_array(m_document, CommonNames::Index));
         if (index_array->size() % 2 != 0)
             return error("Malformed xref dictionary");
 
         for (size_t i = 0; i < index_array->size(); i += 2)
-            subsection_indices.append({ index_array->at(i).get<int>(), index_array->at(i + 1).get<int>() - 1 });
+            subsections.append({ index_array->at(i).get<int>(), index_array->at(i + 1).get<int>() });
     } else {
-        subsection_indices.append({ 0, object_count - 1 });
+        subsections.append({ 0, number_of_object_entries });
     }
-    auto stream = TRY(parse_stream(dict));
     auto table = adopt_ref(*new XRefTable());
 
-    auto field_to_long = [](Span<const u8> field) -> long {
+    auto field_to_long = [](ReadonlyBytes field) -> long {
         long value = 0;
-        const u8 max = (field.size() - 1) * 8;
+        u8 const max = (field.size() - 1) * 8;
         for (size_t i = 0; i < field.size(); ++i) {
             value |= static_cast<long>(field[i]) << (max - (i * 8));
         }
@@ -324,34 +473,39 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_stream()
     };
 
     size_t byte_index = 0;
-    size_t subsection_index = 0;
 
-    Vector<XRefEntry> entries;
+    for (auto [start, count] : subsections) {
+        Vector<XRefEntry> entries;
 
-    for (int entry_index = 0; entry_index < object_count; ++entry_index) {
-        Array<long, 3> fields;
-        for (size_t field_index = 0; field_index < 3; ++field_index) {
-            auto field_size = field_sizes->at(field_index).get_u32();
-            auto field = stream->bytes().slice(byte_index, field_size);
-            fields[field_index] = field_to_long(field);
-            byte_index += field_size;
+        for (int i = 0; i < count; i++) {
+            Array<u64, 3> fields;
+            for (size_t field_index = 0; field_index < 3; ++field_index) {
+                if (!field_sizes->at(field_index).has_u32())
+                    return error("Malformed xref stream");
+
+                auto field_size = field_sizes->at(field_index).get_u32();
+                if (field_size > 8)
+                    return error("Malformed xref stream");
+
+                if (byte_index + field_size > stream->bytes().size())
+                    return error("The xref stream data cut off early");
+
+                auto field = stream->bytes().slice(byte_index, field_size);
+                fields[field_index] = field_to_long(field);
+                byte_index += field_size;
+            }
+
+            u8 type = 1;
+            if (field_sizes->at(0).get_u32() != 0)
+                type = fields[0];
+
+            entries.append({ fields[1], static_cast<u16>(fields[2]), type != 0, type == 2 });
         }
 
-        u8 type = fields[0];
-        if (!field_sizes->at(0).get_u32())
-            type = 1;
-
-        entries.append({ fields[1], static_cast<u16>(fields[2]), type != 0, type == 2 });
-
-        auto indices = subsection_indices[subsection_index];
-        if (entry_index >= indices.get<1>()) {
-            table->add_section({ indices.get<0>(), indices.get<1>(), entries });
-            entries.clear();
-            subsection_index++;
-        }
+        table->add_section({ start, count, move(entries) });
     }
 
-    m_trailer = dict;
+    table->set_trailer(dict);
 
     return table;
 }
@@ -364,29 +518,30 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_table()
     }
 
     m_reader.move_by(4);
+    m_reader.consume_non_eol_whitespace();
     if (!m_reader.consume_eol())
         return error("Expected newline after \"xref\"");
 
     auto table = adopt_ref(*new XRefTable());
 
-    do {
-        if (m_reader.matches("trailer"))
-            return table;
-
+    while (m_reader.matches_number()) {
         Vector<XRefEntry> entries;
 
         auto starting_index_value = TRY(parse_number());
-        auto starting_index = starting_index_value.get<int>();
         auto object_count_value = TRY(parse_number());
+        if (!(starting_index_value.has_u32() && object_count_value.has_u32()))
+            return error("Malformed xref entry");
+
         auto object_count = object_count_value.get<int>();
+        auto starting_index = starting_index_value.get<int>();
 
         for (int i = 0; i < object_count; i++) {
-            auto offset_string = String(m_reader.bytes().slice(m_reader.offset(), 10));
+            auto offset_string = ByteString(m_reader.bytes().slice(m_reader.offset(), 10));
             m_reader.move_by(10);
             if (!m_reader.consume(' '))
                 return error("Malformed xref entry");
 
-            auto generation_string = String(m_reader.bytes().slice(m_reader.offset(), 5));
+            auto generation_string = ByteString(m_reader.bytes().slice(m_reader.offset(), 5));
             m_reader.move_by(5);
             if (!m_reader.consume(' '))
                 return error("Malformed xref entry");
@@ -408,14 +563,18 @@ PDFErrorOr<NonnullRefPtr<XRefTable>> DocumentParser::parse_xref_table()
                 m_reader.move_by(2);
             }
 
-            auto offset = strtol(offset_string.characters(), nullptr, 10);
+            u64 offset = strtoll(offset_string.characters(), nullptr, 10);
             auto generation = strtol(generation_string.characters(), nullptr, 10);
 
             entries.append({ offset, static_cast<u16>(generation), letter == 'n' });
         }
 
         table->add_section({ starting_index, object_count, entries });
-    } while (m_reader.matches_number());
+    }
+
+    m_reader.consume_whitespace();
+    if (m_reader.matches("trailer"))
+        table->set_trailer(TRY(parse_file_trailer()));
 
     return table;
 }
@@ -429,21 +588,7 @@ PDFErrorOr<NonnullRefPtr<DictObject>> DocumentParser::parse_file_trailer()
         return error("Expected \"trailer\" keyword");
     m_reader.move_by(7);
     m_reader.consume_whitespace();
-    auto dict = TRY(parse_dict());
-
-    if (!m_reader.matches("startxref"))
-        return error("Expected \"startxref\"");
-    m_reader.move_by(9);
-    m_reader.consume_whitespace();
-
-    m_reader.move_until([&](auto) { return m_reader.matches_eol(); });
-    VERIFY(m_reader.consume_eol());
-    if (!m_reader.matches("%%EOF"))
-        return error("Expected \"%%EOF\"");
-
-    m_reader.move_by(5);
-    m_reader.consume_whitespace();
-    return dict;
+    return parse_dict();
 }
 
 PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
@@ -453,21 +598,14 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
 
     m_reader.move_to(stream_offset);
 
-    auto first_number = TRY(parse_number());
-    auto second_number = TRY(parse_number());
+    auto obj_stream = TRY(parse_indirect_value());
+    auto stream = TRY(indirect_value_as_stream(obj_stream));
 
-    if (first_number.get<int>() != object_stream_index)
+    if (obj_stream->index() != object_stream_index)
         return error("Mismatching object stream index");
-    if (second_number.get<int>() != 0)
-        return error("Non-zero object stream generation number");
 
-    if (!m_reader.matches("obj"))
-        return error("Malformed object stream");
-    m_reader.move_by(3);
-    if (m_reader.matches_eol())
-        m_reader.consume_eol();
+    auto dict = stream->dict();
 
-    auto dict = TRY(parse_dict());
     auto type = TRY(dict->get_name(m_document, CommonNames::Type))->name();
     if (type != "ObjStm")
         return error("Invalid object stream type");
@@ -475,8 +613,10 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
     auto object_count = dict->get_value("N").get_u32();
     auto first_object_offset = dict->get_value("First").get_u32();
 
-    auto stream = TRY(parse_stream(dict));
     Parser stream_parser(m_document, stream->bytes());
+
+    // The data was already decrypted when reading the outer compressed ObjStm.
+    stream_parser.set_encryption_enabled(false);
 
     for (u32 i = 0; i < object_count; ++i) {
         auto object_number = TRY(stream_parser.parse_number());
@@ -488,7 +628,11 @@ PDFErrorOr<Value> DocumentParser::parse_compressed_object_with_index(u32 index)
         }
     }
 
-    return TRY(stream_parser.parse_value());
+    stream_parser.push_reference({ index, 0 });
+    auto value = TRY(stream_parser.parse_value());
+    stream_parser.pop_reference();
+
+    return value;
 }
 
 PDFErrorOr<DocumentParser::PageOffsetHintTable> DocumentParser::parse_page_offset_hint_table(ReadonlyBytes hint_stream_bytes)
@@ -499,13 +643,13 @@ PDFErrorOr<DocumentParser::PageOffsetHintTable> DocumentParser::parse_page_offse
     size_t offset = 0;
 
     auto read_u32 = [&] {
-        u32 data = reinterpret_cast<const u32*>(hint_stream_bytes.data() + offset)[0];
+        u32 data = reinterpret_cast<u32 const*>(hint_stream_bytes.data() + offset)[0];
         offset += 4;
         return AK::convert_between_host_and_big_endian(data);
     };
 
     auto read_u16 = [&] {
-        u16 data = reinterpret_cast<const u16*>(hint_stream_bytes.data() + offset)[0];
+        u16 data = reinterpret_cast<u16 const*>(hint_stream_bytes.data() + offset)[0];
         offset += 2;
         return AK::convert_between_host_and_big_endian(data);
     };
@@ -539,12 +683,12 @@ PDFErrorOr<DocumentParser::PageOffsetHintTable> DocumentParser::parse_page_offse
     return hint_table;
 }
 
-Vector<DocumentParser::PageOffsetHintTableEntry> DocumentParser::parse_all_page_offset_hint_table_entries(PageOffsetHintTable const& hint_table, ReadonlyBytes hint_stream_bytes)
+PDFErrorOr<Vector<DocumentParser::PageOffsetHintTableEntry>> DocumentParser::parse_all_page_offset_hint_table_entries(PageOffsetHintTable const& hint_table, ReadonlyBytes hint_stream_bytes)
 {
-    InputMemoryStream input_stream(hint_stream_bytes);
-    input_stream.seek(sizeof(PageOffsetHintTable));
+    auto input_stream = TRY(try_make<FixedMemoryStream>(hint_stream_bytes));
+    TRY(input_stream->seek(sizeof(PageOffsetHintTable)));
 
-    InputBitStream bit_stream(input_stream);
+    LittleEndianInputBitStream bit_stream { move(input_stream) };
 
     auto number_of_pages = m_linearization_dictionary.value().number_of_pages;
     Vector<PageOffsetHintTableEntry> entries;
@@ -559,19 +703,21 @@ Vector<DocumentParser::PageOffsetHintTableEntry> DocumentParser::parse_all_page_
     auto bits_required_for_greatest_shared_obj_identifier = hint_table.bits_required_for_greatest_shared_obj_identifier;
     auto bits_required_for_fraction_numerator = hint_table.bits_required_for_fraction_numerator;
 
-    auto parse_int_entry = [&](u32 PageOffsetHintTableEntry::*field, u32 bit_size) {
+    auto parse_int_entry = [&](u32 PageOffsetHintTableEntry::*field, u32 bit_size) -> ErrorOr<void> {
         if (bit_size <= 0)
-            return;
+            return {};
 
         for (int i = 0; i < number_of_pages; i++) {
             auto& entry = entries[i];
-            entry.*field = bit_stream.read_bits(bit_size);
+            entry.*field = TRY(bit_stream.read_bits(bit_size));
         }
+
+        return {};
     };
 
-    auto parse_vector_entry = [&](Vector<u32> PageOffsetHintTableEntry::*field, u32 bit_size) {
+    auto parse_vector_entry = [&](Vector<u32> PageOffsetHintTableEntry::*field, u32 bit_size) -> ErrorOr<void> {
         if (bit_size <= 0)
-            return;
+            return {};
 
         for (int page = 1; page < number_of_pages; page++) {
             auto number_of_shared_objects = entries[page].number_of_shared_objects;
@@ -579,19 +725,21 @@ Vector<DocumentParser::PageOffsetHintTableEntry> DocumentParser::parse_all_page_
             items.ensure_capacity(number_of_shared_objects);
 
             for (size_t i = 0; i < number_of_shared_objects; i++)
-                items.unchecked_append(bit_stream.read_bits(bit_size));
+                items.unchecked_append(TRY(bit_stream.read_bits(bit_size)));
 
             entries[page].*field = move(items);
         }
+
+        return {};
     };
 
-    parse_int_entry(&PageOffsetHintTableEntry::objects_in_page_number, bits_required_for_object_number);
-    parse_int_entry(&PageOffsetHintTableEntry::page_length_number, bits_required_for_page_length);
-    parse_int_entry(&PageOffsetHintTableEntry::number_of_shared_objects, bits_required_for_number_of_shared_obj_refs);
-    parse_vector_entry(&PageOffsetHintTableEntry::shared_object_identifiers, bits_required_for_greatest_shared_obj_identifier);
-    parse_vector_entry(&PageOffsetHintTableEntry::shared_object_location_numerators, bits_required_for_fraction_numerator);
-    parse_int_entry(&PageOffsetHintTableEntry::page_content_stream_offset_number, bits_required_for_content_stream_offsets);
-    parse_int_entry(&PageOffsetHintTableEntry::page_content_stream_length_number, bits_required_for_content_stream_length);
+    TRY(parse_int_entry(&PageOffsetHintTableEntry::objects_in_page_number, bits_required_for_object_number));
+    TRY(parse_int_entry(&PageOffsetHintTableEntry::page_length_number, bits_required_for_page_length));
+    TRY(parse_int_entry(&PageOffsetHintTableEntry::number_of_shared_objects, bits_required_for_number_of_shared_obj_refs));
+    TRY(parse_vector_entry(&PageOffsetHintTableEntry::shared_object_identifiers, bits_required_for_greatest_shared_obj_identifier));
+    TRY(parse_vector_entry(&PageOffsetHintTableEntry::shared_object_location_numerators, bits_required_for_fraction_numerator));
+    TRY(parse_int_entry(&PageOffsetHintTableEntry::page_content_stream_offset_number, bits_required_for_content_stream_offsets));
+    TRY(parse_int_entry(&PageOffsetHintTableEntry::page_content_stream_length_number, bits_required_for_content_stream_length));
 
     return entries;
 }
@@ -601,19 +749,14 @@ bool DocumentParser::navigate_to_before_eof_marker()
     m_reader.set_reading_backwards();
 
     while (!m_reader.done()) {
+        m_reader.consume_eol();
+        m_reader.consume_whitespace();
+        if (m_reader.matches("%%EOF")) {
+            m_reader.move_by(5);
+            return true;
+        }
+
         m_reader.move_until([&](auto) { return m_reader.matches_eol(); });
-        if (m_reader.done())
-            return false;
-
-        m_reader.consume_eol();
-        if (!m_reader.matches("%%EOF"))
-            continue;
-
-        m_reader.move_by(5);
-        if (!m_reader.matches_eol())
-            continue;
-        m_reader.consume_eol();
-        return true;
     }
 
     return false;
@@ -628,6 +771,8 @@ bool DocumentParser::navigate_to_after_startxref()
         auto offset = m_reader.offset() + 1;
 
         m_reader.consume_eol();
+        m_reader.consume_whitespace();
+
         if (!m_reader.matches("startxref"))
             continue;
 
@@ -647,7 +792,7 @@ PDFErrorOr<RefPtr<DictObject>> DocumentParser::conditionally_parse_page_tree_nod
     auto dict_value = TRY(parse_object_with_index(object_index));
     auto dict_object = dict_value.get<NonnullRefPtr<Object>>();
     if (!dict_object->is<DictObject>())
-        return error(String::formatted("Invalid page tree with xref index {}", object_index));
+        return error(ByteString::formatted("Invalid page tree with xref index {}", object_index));
 
     auto dict = dict_object->cast<DictObject>();
     if (!dict->contains_any_of(CommonNames::Type, CommonNames::Parent, CommonNames::Kids, CommonNames::Count))
@@ -687,7 +832,7 @@ struct Formatter<PDF::DocumentParser::LinearizationDictionary> : Formatter<Strin
         builder.appendff("  offset_of_main_xref_table={}\n", dict.offset_of_main_xref_table);
         builder.appendff("  first_page={}\n", dict.first_page);
         builder.append('}');
-        return Formatter<StringView>::format(format_builder, builder.to_string());
+        return Formatter<StringView>::format(format_builder, builder.to_byte_string());
     }
 };
 
@@ -711,7 +856,7 @@ struct Formatter<PDF::DocumentParser::PageOffsetHintTable> : Formatter<StringVie
         builder.appendff("  bits_required_for_fraction_numerator={}\n", table.bits_required_for_fraction_numerator);
         builder.appendff("  shared_object_reference_fraction_denominator={}\n", table.shared_object_reference_fraction_denominator);
         builder.append('}');
-        return Formatter<StringView>::format(format_builder, builder.to_string());
+        return Formatter<StringView>::format(format_builder, builder.to_byte_string());
     }
 };
 
@@ -735,7 +880,7 @@ struct Formatter<PDF::DocumentParser::PageOffsetHintTableEntry> : Formatter<Stri
         builder.appendff("  page_content_stream_offset_number={}\n", entry.page_content_stream_offset_number);
         builder.appendff("  page_content_stream_length_number={}\n", entry.page_content_stream_length_number);
         builder.append('}');
-        return Formatter<StringView>::format(format_builder, builder.to_string());
+        return Formatter<StringView>::format(format_builder, builder.to_byte_string());
     }
 };
 

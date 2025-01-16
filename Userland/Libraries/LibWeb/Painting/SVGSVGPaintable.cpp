@@ -9,9 +9,11 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<SVGSVGPaintable> SVGSVGPaintable::create(Layout::SVGSVGBox const& layout_box)
+JS_DEFINE_ALLOCATOR(SVGSVGPaintable);
+
+JS::NonnullGCPtr<SVGSVGPaintable> SVGSVGPaintable::create(Layout::SVGSVGBox const& layout_box)
 {
-    return adopt_ref(*new SVGSVGPaintable(layout_box));
+    return layout_box.heap().allocate_without_realm<SVGSVGPaintable>(layout_box);
 }
 
 SVGSVGPaintable::SVGSVGPaintable(Layout::SVGSVGBox const& layout_box)
@@ -24,23 +26,23 @@ Layout::SVGSVGBox const& SVGSVGPaintable::layout_box() const
     return static_cast<Layout::SVGSVGBox const&>(layout_node());
 }
 
-void SVGSVGPaintable::before_children_paint(PaintContext& context, PaintPhase phase, ShouldClipOverflow should_clip_overflow) const
+void SVGSVGPaintable::before_children_paint(PaintContext& context, PaintPhase phase) const
 {
+    PaintableBox::before_children_paint(context, phase);
     if (phase != PaintPhase::Foreground)
         return;
-
-    if (!context.has_svg_context())
-        context.set_svg_context(SVGContext(absolute_rect()));
-
-    PaintableBox::before_children_paint(context, phase, should_clip_overflow);
+    context.display_list_recorder().save();
+    auto clip_rect = absolute_rect();
+    clip_rect.translate_by(enclosing_scroll_frame_offset().value_or({}));
+    context.display_list_recorder().add_clip_rect(context.enclosing_device_rect(clip_rect).to_type<int>());
 }
 
-void SVGSVGPaintable::after_children_paint(PaintContext& context, PaintPhase phase, ShouldClipOverflow should_clip_overflow) const
+void SVGSVGPaintable::after_children_paint(PaintContext& context, PaintPhase phase) const
 {
-    PaintableBox::after_children_paint(context, phase, should_clip_overflow);
+    PaintableBox::after_children_paint(context, phase);
     if (phase != PaintPhase::Foreground)
         return;
-    context.clear_svg_context();
+    context.display_list_recorder().restore();
 }
 
 }

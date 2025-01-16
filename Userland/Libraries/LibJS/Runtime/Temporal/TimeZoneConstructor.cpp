@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,15 +11,17 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(TimeZoneConstructor);
+
 // 11.2 The Temporal.TimeZone Constructor, https://tc39.es/proposal-temporal/#sec-temporal-timezone-constructor
 TimeZoneConstructor::TimeZoneConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.TimeZone.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.TimeZone.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void TimeZoneConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -43,7 +45,7 @@ ThrowCompletionOr<Value> TimeZoneConstructor::call()
 }
 
 // 11.2.1 Temporal.TimeZone ( identifier ), https://tc39.es/proposal-temporal/#sec-temporal.timezone
-ThrowCompletionOr<Object*> TimeZoneConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> TimeZoneConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
@@ -59,11 +61,11 @@ ThrowCompletionOr<Object*> TimeZoneConstructor::construct(FunctionObject& new_ta
         }
 
         // b. Set identifier to ! CanonicalizeTimeZoneName(identifier).
-        identifier = canonicalize_time_zone_name(identifier);
+        identifier = MUST_OR_THROW_OOM(canonicalize_time_zone_name(vm, identifier));
     }
 
     // 4. Return ? CreateTemporalTimeZone(identifier, NewTarget).
-    return TRY(create_temporal_time_zone(vm, identifier, &new_target));
+    return *TRY(create_temporal_time_zone(vm, identifier, &new_target));
 }
 
 // 11.3.2 Temporal.TimeZone.from ( item ), https://tc39.es/proposal-temporal/#sec-temporal.timezone.from

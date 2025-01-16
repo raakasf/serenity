@@ -1,12 +1,13 @@
 /*
  * Copyright (c) 2021, Jesse Buhagiar <jooster669@gmail.com>
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
- * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
+ * Copyright (c) 2022-2024, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
+#include <AK/StringBuilder.h>
 #include <AK/Vector.h>
 #include <LibGL/GLContext.h>
 #include <LibGL/Image.h>
@@ -69,7 +70,7 @@ GLContext::GLContext(RefPtr<GPU::Driver> driver, NonnullOwnPtr<GPU::Device> devi
         texture_coordinate_generation[3].eye_plane_coefficients = { 0.f, 0.f, 0.f, 0.f };
     }
 
-    build_extension_string();
+    m_extensions = build_extension_string().release_value_but_fixme_should_propagate_errors();
 }
 
 GLContext::~GLContext()
@@ -117,13 +118,13 @@ void GLContext::gl_clear_color(GLclampf red, GLclampf green, GLclampf blue, GLcl
     m_clear_color.clamp(0.f, 1.f);
 }
 
-void GLContext::gl_clear_depth(GLdouble depth)
+void GLContext::gl_clear_depth(GLfloat depth)
 {
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_clear_depth, depth);
 
     RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
 
-    m_clear_depth = clamp(static_cast<float>(depth), 0.f, 1.f);
+    m_clear_depth = clamp(depth, 0.f, 1.f);
 }
 
 void GLContext::gl_end()
@@ -168,7 +169,7 @@ void GLContext::gl_end()
         VERIFY_NOT_REACHED();
     }
 
-    m_rasterizer->draw_primitives(primitive_type, model_view_matrix(), projection_matrix(), m_vertex_list);
+    m_rasterizer->draw_primitives(primitive_type, m_vertex_list);
     m_vertex_list.clear_with_capacity();
 }
 
@@ -194,7 +195,7 @@ GLubyte const* GLContext::gl_get_string(GLenum name)
     case GL_VERSION:
         return reinterpret_cast<GLubyte const*>("1.5");
     case GL_EXTENSIONS:
-        return reinterpret_cast<GLubyte const*>(m_extensions.characters());
+        return reinterpret_cast<GLubyte const*>(m_extensions.data());
     case GL_SHADING_LANGUAGE_VERSION:
         return reinterpret_cast<GLubyte const*>("0.0");
     default:
@@ -258,87 +259,6 @@ void GLContext::gl_finish()
     RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
 
     // No-op since GLContext is completely synchronous at the moment
-}
-
-void GLContext::gl_blend_func(GLenum src_factor, GLenum dst_factor)
-{
-    APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_blend_func, src_factor, dst_factor);
-
-    RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
-
-    // FIXME: The list of allowed enums differs between API versions
-    // This was taken from the 2.0 spec on https://docs.gl/gl2/glBlendFunc
-
-    RETURN_WITH_ERROR_IF(!(src_factor == GL_ZERO
-                             || src_factor == GL_ONE
-                             || src_factor == GL_SRC_COLOR
-                             || src_factor == GL_ONE_MINUS_SRC_COLOR
-                             || src_factor == GL_DST_COLOR
-                             || src_factor == GL_ONE_MINUS_DST_COLOR
-                             || src_factor == GL_SRC_ALPHA
-                             || src_factor == GL_ONE_MINUS_SRC_ALPHA
-                             || src_factor == GL_DST_ALPHA
-                             || src_factor == GL_ONE_MINUS_DST_ALPHA
-                             || src_factor == GL_CONSTANT_COLOR
-                             || src_factor == GL_ONE_MINUS_CONSTANT_COLOR
-                             || src_factor == GL_CONSTANT_ALPHA
-                             || src_factor == GL_ONE_MINUS_CONSTANT_ALPHA
-                             || src_factor == GL_SRC_ALPHA_SATURATE),
-        GL_INVALID_ENUM);
-
-    RETURN_WITH_ERROR_IF(!(dst_factor == GL_ZERO
-                             || dst_factor == GL_ONE
-                             || dst_factor == GL_SRC_COLOR
-                             || dst_factor == GL_ONE_MINUS_SRC_COLOR
-                             || dst_factor == GL_DST_COLOR
-                             || dst_factor == GL_ONE_MINUS_DST_COLOR
-                             || dst_factor == GL_SRC_ALPHA
-                             || dst_factor == GL_ONE_MINUS_SRC_ALPHA
-                             || dst_factor == GL_DST_ALPHA
-                             || dst_factor == GL_ONE_MINUS_DST_ALPHA
-                             || dst_factor == GL_CONSTANT_COLOR
-                             || dst_factor == GL_ONE_MINUS_CONSTANT_COLOR
-                             || dst_factor == GL_CONSTANT_ALPHA
-                             || dst_factor == GL_ONE_MINUS_CONSTANT_ALPHA),
-        GL_INVALID_ENUM);
-
-    m_blend_source_factor = src_factor;
-    m_blend_destination_factor = dst_factor;
-
-    auto map_gl_blend_factor_to_device = [](GLenum factor) constexpr
-    {
-        switch (factor) {
-        case GL_ZERO:
-            return GPU::BlendFactor::Zero;
-        case GL_ONE:
-            return GPU::BlendFactor::One;
-        case GL_SRC_ALPHA:
-            return GPU::BlendFactor::SrcAlpha;
-        case GL_ONE_MINUS_SRC_ALPHA:
-            return GPU::BlendFactor::OneMinusSrcAlpha;
-        case GL_SRC_COLOR:
-            return GPU::BlendFactor::SrcColor;
-        case GL_ONE_MINUS_SRC_COLOR:
-            return GPU::BlendFactor::OneMinusSrcColor;
-        case GL_DST_ALPHA:
-            return GPU::BlendFactor::DstAlpha;
-        case GL_ONE_MINUS_DST_ALPHA:
-            return GPU::BlendFactor::OneMinusDstAlpha;
-        case GL_DST_COLOR:
-            return GPU::BlendFactor::DstColor;
-        case GL_ONE_MINUS_DST_COLOR:
-            return GPU::BlendFactor::OneMinusDstColor;
-        case GL_SRC_ALPHA_SATURATE:
-            return GPU::BlendFactor::SrcAlphaSaturate;
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    };
-
-    auto options = m_rasterizer->options();
-    options.blend_source_factor = map_gl_blend_factor_to_device(m_blend_source_factor);
-    options.blend_destination_factor = map_gl_blend_factor_to_device(m_blend_destination_factor);
-    m_rasterizer->set_options(options);
 }
 
 void GLContext::gl_alpha_func(GLenum func, GLclampf ref)
@@ -837,7 +757,8 @@ void GLContext::gl_raster_pos(GLfloat x, GLfloat y, GLfloat z, GLfloat w)
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_raster_pos, x, y, z, w);
     RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
 
-    m_rasterizer->set_raster_position({ x, y, z, w }, model_view_matrix(), projection_matrix());
+    sync_matrices();
+    m_rasterizer->set_raster_position({ x, y, z, w });
 }
 
 void GLContext::gl_line_width(GLfloat width)
@@ -917,38 +838,45 @@ void GLContext::present()
 
 void GLContext::sync_device_config()
 {
+    sync_clip_planes();
     sync_device_sampler_config();
     sync_device_texture_units();
     sync_light_state();
+    sync_matrices();
     sync_stencil_configuration();
-    sync_clip_planes();
 }
 
-void GLContext::build_extension_string()
+ErrorOr<ByteBuffer> GLContext::build_extension_string()
 {
-    Vector<StringView> extensions;
+    Vector<StringView, 6> extensions;
 
     // FIXME: npot texture support became a required core feature starting with OpenGL 2.0 (https://www.khronos.org/opengl/wiki/NPOT_Texture)
     // Ideally we would verify if the selected device adheres to the requested OpenGL context version before context creation
     // and refuse to create a context if it doesn't.
     if (m_device_info.supports_npot_textures)
-        extensions.append("GL_ARB_texture_non_power_of_two"sv);
+        TRY(extensions.try_append("GL_ARB_texture_non_power_of_two"sv));
 
     if (m_device_info.num_texture_units > 1)
-        extensions.append("GL_ARB_multitexture"sv);
+        TRY(extensions.try_append("GL_ARB_multitexture"sv));
 
     if (m_device_info.supports_texture_clamp_to_edge)
-        extensions.append("GL_EXT_texture_edge_clamp"sv);
+        TRY(extensions.try_append("GL_EXT_texture_edge_clamp"sv));
 
     if (m_device_info.supports_texture_env_add) {
-        extensions.append("GL_ARB_texture_env_add"sv);
-        extensions.append("GL_EXT_texture_env_add"sv);
+        TRY(extensions.try_append("GL_ARB_texture_env_add"sv));
+        TRY(extensions.try_append("GL_EXT_texture_env_add"sv));
     }
 
     if (m_device_info.max_texture_lod_bias > 0.f)
-        extensions.append("GL_EXT_texture_lod_bias"sv);
+        TRY(extensions.try_append("GL_EXT_texture_lod_bias"sv));
 
-    m_extensions = String::join(' ', extensions);
+    StringBuilder string_builder {};
+    TRY(string_builder.try_join(' ', extensions));
+
+    // Create null-terminated string
+    auto extensions_bytes = TRY(string_builder.to_byte_buffer());
+    TRY(extensions_bytes.try_append(0));
+    return extensions_bytes;
 }
 
 ErrorOr<NonnullOwnPtr<GLContext>> create_context(Gfx::Bitmap& bitmap)

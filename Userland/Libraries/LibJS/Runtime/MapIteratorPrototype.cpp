@@ -8,23 +8,25 @@
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/MapIteratorPrototype.h>
 
 namespace JS {
 
+JS_DEFINE_ALLOCATOR(MapIteratorPrototype);
+
 MapIteratorPrototype::MapIteratorPrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().iterator_prototype())
+    : PrototypeObject(realm.intrinsics().iterator_prototype())
 {
 }
 
 void MapIteratorPrototype::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    Object::initialize(realm);
+    Base::initialize(realm);
 
     define_native_function(realm, vm.names.next, next, 0, Attribute::Configurable | Attribute::Writable);
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, "Map Iterator"), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Map Iterator"_string), Attribute::Configurable);
 }
 
 // 24.1.5.2.1 %MapIteratorPrototype%.next ( ), https://tc39.es/ecma262/#sec-%mapiteratorprototype%.next
@@ -32,7 +34,7 @@ JS_DEFINE_NATIVE_FUNCTION(MapIteratorPrototype::next)
 {
     auto& realm = *vm.current_realm();
 
-    auto* map_iterator = TRY(typed_this_value(vm));
+    auto map_iterator = TRY(typed_this_value(vm));
     if (map_iterator->done())
         return create_iterator_result_object(vm, js_undefined(), true);
 

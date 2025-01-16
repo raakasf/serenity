@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -194,19 +194,19 @@ Optional<HourCycle> get_default_regional_hour_cycle(StringView locale);
 
 Optional<MinimumDaysRegion> minimum_days_region_from_string(StringView minimum_days_region);
 Optional<u8> get_regional_minimum_days(StringView region);
-Optional<u8> get_locale_minimum_days(StringView region);
+Optional<u8> get_locale_minimum_days(StringView locale);
 
 Optional<FirstDayRegion> first_day_region_from_string(StringView first_day_region);
 Optional<Weekday> get_regional_first_day(StringView region);
-Optional<Weekday> get_locale_first_day(StringView region);
+Optional<Weekday> get_locale_first_day(StringView locale);
 
 Optional<WeekendStartRegion> weekend_start_region_from_string(StringView weekend_start_region);
 Optional<Weekday> get_regional_weekend_start(StringView region);
-Optional<Weekday> get_locale_weekend_start(StringView region);
+Optional<Weekday> get_locale_weekend_start(StringView locale);
 
 Optional<WeekendEndRegion> weekend_end_region_from_string(StringView weekend_end_region);
 Optional<Weekday> get_regional_weekend_end(StringView region);
-Optional<Weekday> get_locale_weekend_end(StringView region);
+Optional<Weekday> get_locale_weekend_end(StringView locale);
 
 String combine_skeletons(StringView first, StringView second);
 
@@ -225,7 +225,7 @@ Optional<StringView> get_calendar_weekday_symbol(StringView locale, StringView c
 Optional<StringView> get_calendar_day_period_symbol(StringView locale, StringView calendar, CalendarPatternStyle style, DayPeriod value);
 Optional<StringView> get_calendar_day_period_symbol_for_hour(StringView locale, StringView calendar, CalendarPatternStyle style, u8 hour);
 
-String format_time_zone(StringView locale, StringView time_zone, CalendarPatternStyle style, AK::Time time);
+String format_time_zone(StringView locale, StringView time_zone, CalendarPatternStyle style, AK::UnixDateTime time);
 Optional<StringView> get_time_zone_name(StringView locale, StringView time_zone, CalendarPatternStyle style, TimeZone::InDST in_dst);
 Optional<TimeZoneFormat> get_time_zone_format(StringView locale);
 

@@ -6,7 +6,7 @@
 
 #include <Kernel/Bus/PCI/API.h>
 #include <Kernel/Devices/PCISerialDevice.h>
-#include <Kernel/IOWindow.h>
+#include <Kernel/Library/IOWindow.h>
 #include <Kernel/Sections.h>
 
 namespace Kernel {
@@ -15,7 +15,7 @@ static SerialDevice* s_the = nullptr;
 
 UNMAP_AFTER_INIT void PCISerialDevice::detect()
 {
-    size_t current_device_minor = 68;
+    size_t current_device_minor = 4;
     MUST(PCI::enumerate([&](PCI::DeviceIdentifier const& device_identifier) {
         for (auto& board_definition : board_definitions) {
             if (board_definition.device_id != device_identifier.hardware_id())

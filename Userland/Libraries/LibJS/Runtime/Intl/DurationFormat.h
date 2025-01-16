@@ -17,6 +17,7 @@ namespace JS::Intl {
 
 class DurationFormat final : public Object {
     JS_OBJECT(DurationFormat, Object);
+    JS_DECLARE_ALLOCATOR(DurationFormat);
 
 public:
     enum class Style {
@@ -62,7 +63,7 @@ public:
 
     void set_style(StringView style) { m_style = style_from_string(style); }
     Style style() const { return m_style; }
-    String style_string() const { return style_to_string(m_style); }
+    StringView style_string() const { return style_to_string(m_style); }
 
     void set_years_style(StringView years_style) { m_years_style = date_style_from_string(years_style); }
     ValueStyle years_style() const { return m_years_style; }
@@ -163,7 +164,7 @@ private:
     String m_locale;                                      // [[Locale]]
     String m_data_locale;                                 // [[DataLocale]]
     String m_numbering_system;                            // [[NumberingSystem]]
-    Style m_style;                                        // [[Style]]
+    Style m_style { Style::Long };                        // [[Style]]
     ValueStyle m_years_style { ValueStyle::Long };        // [[YearsStyle]]
     Display m_years_display { Display::Auto };            // [[YearsDisplay]]
     ValueStyle m_months_style { ValueStyle::Long };       // [[MonthsStyle]]
@@ -194,8 +195,8 @@ struct DurationInstanceComponent {
     DurationFormat::Display (DurationFormat::*get_display_slot)() const;
     void (DurationFormat::*set_display_slot)(StringView);
     StringView unit;
-    StringView unit_singular;
-    Span<StringView const> values;
+    StringView number_format_unit;
+    ReadonlySpan<StringView> values;
     StringView digital_default;
 };
 
@@ -224,7 +225,7 @@ struct DurationUnitOptions {
 ThrowCompletionOr<Temporal::DurationRecord> to_duration_record(VM&, Value input);
 i8 duration_record_sign(Temporal::DurationRecord const&);
 bool is_valid_duration_record(Temporal::DurationRecord const&);
-ThrowCompletionOr<DurationUnitOptions> get_duration_unit_options(VM&, String const& unit, Object const& options, StringView base_style, Span<StringView const> styles_list, StringView digital_base, StringView previous_style);
+ThrowCompletionOr<DurationUnitOptions> get_duration_unit_options(VM&, String const& unit, Object const& options, StringView base_style, ReadonlySpan<StringView> styles_list, StringView digital_base, StringView previous_style);
 Vector<PatternPartition> partition_duration_format_pattern(VM&, DurationFormat const&, Temporal::DurationRecord const& duration);
 
 }

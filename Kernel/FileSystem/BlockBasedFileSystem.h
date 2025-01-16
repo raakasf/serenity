@@ -17,9 +17,9 @@ public:
 
     virtual ~BlockBasedFileSystem() override;
 
-    u64 logical_block_size() const { return m_logical_block_size; };
+    u64 device_block_size() const { return m_device_block_size; }
 
-    virtual void flush_writes() override;
+    virtual ErrorOr<void> flush_writes() override;
     void flush_writes_impl();
 
 protected:
@@ -39,12 +39,11 @@ protected:
     ErrorOr<void> write_block(BlockIndex, UserOrKernelBuffer const&, size_t count, u64 offset = 0, bool allow_cache = true);
     ErrorOr<void> write_blocks(BlockIndex, unsigned count, UserOrKernelBuffer const&, bool allow_cache = true);
 
-    u64 m_logical_block_size { 512 };
+    u64 m_device_block_size { 512 };
 
     void remove_disk_cache_before_last_unmount();
 
 private:
-    DiskCache& cache() const;
     void flush_specific_block_if_needed(BlockIndex index);
 
     mutable MutexProtected<OwnPtr<DiskCache>> m_cache;

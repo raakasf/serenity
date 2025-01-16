@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2022, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,15 +14,17 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(DurationFormatConstructor);
+
 // 1.2 The Intl.DurationFormat Constructor, https://tc39.es/proposal-intl-duration-format/#sec-intl-durationformat-constructor
 DurationFormatConstructor::DurationFormatConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.DurationFormat.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.DurationFormat.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void DurationFormatConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -42,7 +44,7 @@ ThrowCompletionOr<Value> DurationFormatConstructor::call()
 }
 
 // 1.2.1 Intl.DurationFormat ( [ locales [ , options ] ] ), https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat
-ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> DurationFormatConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
@@ -50,7 +52,7 @@ ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& 
     auto options_value = vm.argument(1);
 
     // 2. Let durationFormat be ? OrdinaryCreateFromConstructor(NewTarget, "%DurationFormatPrototype%", « [[InitializedDurationFormat]], [[Locale]], [[DataLocale]], [[NumberingSystem]], [[Style]], [[YearsStyle]], [[YearsDisplay]], [[MonthsStyle]], [[MonthsDisplay]] , [[WeeksStyle]], [[WeeksDisplay]] , [[DaysStyle]], [[DaysDisplay]] , [[HoursStyle]], [[HoursDisplay]] , [[MinutesStyle]], [[MinutesDisplay]] , [[SecondsStyle]], [[SecondsDisplay]] , [[MillisecondsStyle]], [[MillisecondsDisplay]] , [[MicrosecondsStyle]], [[MicrosecondsDisplay]] , [[NanosecondsStyle]], [[NanosecondsDisplay]], [[FractionalDigits]] »).
-    auto* duration_format = TRY(ordinary_create_from_constructor<DurationFormat>(vm, new_target, &Intrinsics::intl_duration_format_prototype));
+    auto duration_format = TRY(ordinary_create_from_constructor<DurationFormat>(vm, new_target, &Intrinsics::intl_duration_format_prototype));
 
     // 3. Let requestedLocales be ? CanonicalizeLocaleList(locales).
     auto requested_locales = TRY(canonicalize_locale_list(vm, locales));
@@ -58,23 +60,23 @@ ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& 
     // 4. Let options be ? GetOptionsObject(options).
     auto* options = TRY(Temporal::get_options_object(vm, options_value));
 
-    // 5. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+    // 5. Let matcher be ? GetOption(options, "localeMatcher", string, « "lookup", "best fit" », "best fit").
     auto matcher = TRY(get_option(vm, *options, vm.names.localeMatcher, OptionType::String, { "lookup"sv, "best fit"sv }, "best fit"sv));
 
-    // 6. Let numberingSystem be ? GetOption(options, "numberingSystem", "string", undefined, undefined).
+    // 6. Let numberingSystem be ? GetOption(options, "numberingSystem", string, empty, undefined).
     auto numbering_system = TRY(get_option(vm, *options, vm.names.numberingSystem, OptionType::String, {}, Empty {}));
 
     // 7. If numberingSystem is not undefined, then
     if (!numbering_system.is_undefined()) {
         // a. If numberingSystem does not match the Unicode Locale Identifier type nonterminal, throw a RangeError exception.
-        if (!::Locale::is_type_identifier(numbering_system.as_string().string()))
+        if (!::Locale::is_type_identifier(numbering_system.as_string().utf8_string_view()))
             return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, numbering_system, "numberingSystem"sv);
     }
 
     // 8. Let opt be the Record { [[localeMatcher]]: matcher, [[nu]]: numberingSystem }.
     LocaleOptions opt {};
     opt.locale_matcher = matcher;
-    opt.nu = numbering_system.is_undefined() ? Optional<String>() : numbering_system.as_string().string();
+    opt.nu = numbering_system.is_undefined() ? Optional<String>() : numbering_system.as_string().utf8_string();
 
     // 9. Let r be ResolveLocale(%DurationFormat%.[[AvailableLocales]], requestedLocales, opt, %DurationFormat%.[[RelevantExtensionKeys]], %DurationFormat%.[[LocaleData]]).
     auto result = resolve_locale(requested_locales, opt, DurationFormat::relevant_extension_keys());
@@ -89,17 +91,17 @@ ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& 
     if (result.nu.has_value())
         duration_format->set_numbering_system(result.nu.release_value());
 
-    // 13. Let style be ? GetOption(options, "style", "string", « "long", "short", "narrow", "digital" », "short").
+    // 13. Let style be ? GetOption(options, "style", string, « "long", "short", "narrow", "digital" », "short").
     auto style = TRY(get_option(vm, *options, vm.names.style, OptionType::String, { "long"sv, "short"sv, "narrow"sv, "digital"sv }, "short"sv));
 
     // 14. Set durationFormat.[[Style]] to style.
-    duration_format->set_style(style.as_string().string());
+    duration_format->set_style(style.as_string().utf8_string_view());
 
     // 15. Set durationFormat.[[DataLocale]] to r.[[dataLocale]].
     duration_format->set_data_locale(move(result.data_locale));
 
     // 16. Let prevStyle be the empty String.
-    auto previous_style = String::empty();
+    String previous_style {};
 
     // 17. For each row of Table 1, except the header row, in table order, do
     for (auto const& duration_instances_component : duration_instances_components) {
@@ -110,7 +112,7 @@ ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& 
         auto display_slot = duration_instances_component.set_display_slot;
 
         // c. Let unit be the Unit value.
-        auto unit = duration_instances_component.unit;
+        auto unit = MUST(String::from_utf8(duration_instances_component.unit));
 
         // d. Let valueList be the Values value.
         auto value_list = duration_instances_component.values;
@@ -119,7 +121,7 @@ ThrowCompletionOr<Object*> DurationFormatConstructor::construct(FunctionObject& 
         auto digital_base = duration_instances_component.digital_default;
 
         // f. Let unitOptions be ? GetDurationUnitOptions(unit, options, style, valueList, digitalBase, prevStyle).
-        auto unit_options = TRY(get_duration_unit_options(vm, unit, *options, style.as_string().string(), value_list, digital_base, previous_style));
+        auto unit_options = TRY(get_duration_unit_options(vm, unit, *options, style.as_string().utf8_string_view(), value_list, digital_base, previous_style));
 
         // g. Set the value of the styleSlot slot of durationFormat to unitOptions.[[Style]].
         (duration_format->*style_slot)(unit_options.style);

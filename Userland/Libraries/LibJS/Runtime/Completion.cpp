@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,6 +16,8 @@
 
 namespace JS {
 
+bool g_log_all_js_exceptions = false;
+
 Completion::Completion(ThrowCompletionOr<Value> const& throw_completion_or_value)
 {
     if (throw_completion_or_value.is_throw_completion()) {
@@ -28,6 +30,7 @@ Completion::Completion(ThrowCompletionOr<Value> const& throw_completion_or_value
 }
 
 // 6.2.3.1 Await, https://tc39.es/ecma262/#await
+// FIXME: This no longer matches the spec!
 ThrowCompletionOr<Value> await(VM& vm, Value value)
 {
     auto& realm = *vm.current_realm();
@@ -36,10 +39,11 @@ ThrowCompletionOr<Value> await(VM& vm, Value value)
     // NOTE: This is not needed, as we don't suspend anything.
 
     // 2. Let promise be ? PromiseResolve(%Promise%, value).
-    auto* promise_object = TRY(promise_resolve(vm, *realm.intrinsics().promise_constructor(), value));
+    auto* promise_object = TRY(promise_resolve(vm, realm.intrinsics().promise_constructor(), value));
 
-    Optional<bool> success;
-    Value result;
+    IGNORE_USE_IN_ESCAPING_LAMBDA Optional<bool> success;
+    IGNORE_USE_IN_ESCAPING_LAMBDA Value result;
+
     // 3. Let fulfilledClosure be a new Abstract Closure with parameters (value) that captures asyncContext and performs the following steps when called:
     auto fulfilled_closure = [&success, &result](VM& vm) -> ThrowCompletionOr<Value> {
         // a. Let prevContext be the running execution context.
@@ -62,7 +66,7 @@ ThrowCompletionOr<Value> await(VM& vm, Value value)
     };
 
     // 4. Let onFulfilled be CreateBuiltinFunction(fulfilledClosure, 1, "", « »).
-    auto* on_fulfilled = NativeFunction::create(realm, move(fulfilled_closure), 1, "");
+    auto on_fulfilled = NativeFunction::create(realm, move(fulfilled_closure), 1, "");
 
     // 5. Let rejectedClosure be a new Abstract Closure with parameters (reason) that captures asyncContext and performs the following steps when called:
     auto rejected_closure = [&success, &result](VM& vm) -> ThrowCompletionOr<Value> {
@@ -86,10 +90,10 @@ ThrowCompletionOr<Value> await(VM& vm, Value value)
     };
 
     // 6. Let onRejected be CreateBuiltinFunction(rejectedClosure, 1, "", « »).
-    auto* on_rejected = NativeFunction::create(realm, move(rejected_closure), 1, "");
+    auto on_rejected = NativeFunction::create(realm, move(rejected_closure), 1, "");
 
     // 7. Perform PerformPromiseThen(promise, onFulfilled, onRejected).
-    auto* promise = verify_cast<Promise>(promise_object);
+    auto promise = verify_cast<Promise>(promise_object);
     promise->perform_then(on_fulfilled, on_rejected, {});
 
     // FIXME: Since we don't support context suspension, we attempt to "wait" for the promise to resolve
@@ -118,6 +122,29 @@ ThrowCompletionOr<Value> await(VM& vm, Value value)
     if (success.value())
         return result;
     return throw_completion(result);
+}
+
+static void log_exception(Value value)
+{
+    if (!value.is_object()) {
+        dbgln("\033[31;1mTHROW!\033[0m {}", value);
+        return;
+    }
+
+    auto& object = value.as_object();
+    auto& vm = object.vm();
+    dbgln("\033[31;1mTHROW!\033[0m {}", object.get(vm.names.message).value());
+    vm.dump_backtrace();
+}
+
+// 6.2.4.2 ThrowCompletion ( value ), https://tc39.es/ecma262/#sec-throwcompletion
+Completion throw_completion(Value value)
+{
+    if (g_log_all_js_exceptions)
+        log_exception(value);
+
+    // 1. Return Completion Record { [[Type]]: throw, [[Value]]: value, [[Target]]: empty }.
+    return { Completion::Type::Throw, value };
 }
 
 }

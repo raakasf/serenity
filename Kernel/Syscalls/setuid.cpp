@@ -5,7 +5,7 @@
  */
 
 #include <Kernel/API/POSIX/sys/limits.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -30,7 +30,9 @@ ErrorOr<FlatPtr> Process::sys$seteuid(UserID new_euid)
             credentials->egid(),
             credentials->suid(),
             credentials->sgid(),
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->euid() != new_euid)
             protected_data.dumpable = false;
@@ -61,7 +63,9 @@ ErrorOr<FlatPtr> Process::sys$setegid(GroupID new_egid)
             new_egid,
             credentials->suid(),
             credentials->sgid(),
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->egid() != new_egid)
             protected_data.dumpable = false;
@@ -92,7 +96,9 @@ ErrorOr<FlatPtr> Process::sys$setuid(UserID new_uid)
             credentials->egid(),
             new_uid,
             credentials->sgid(),
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->euid() != new_uid)
             protected_data.dumpable = false;
@@ -123,7 +129,9 @@ ErrorOr<FlatPtr> Process::sys$setgid(GroupID new_gid)
             new_gid,
             credentials->suid(),
             new_gid,
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->egid() != new_gid)
             protected_data.dumpable = false;
@@ -160,7 +168,9 @@ ErrorOr<FlatPtr> Process::sys$setreuid(UserID new_ruid, UserID new_euid)
             credentials->egid(),
             credentials->suid(),
             credentials->sgid(),
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->euid() != new_euid)
             protected_data.dumpable = false;
@@ -196,9 +206,47 @@ ErrorOr<FlatPtr> Process::sys$setresuid(UserID new_ruid, UserID new_euid, UserID
             credentials->egid(),
             new_suid,
             credentials->sgid(),
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->euid() != new_euid)
+            protected_data.dumpable = false;
+
+        protected_data.credentials = move(new_credentials);
+        return 0;
+    });
+}
+
+ErrorOr<FlatPtr> Process::sys$setregid(GroupID new_rgid, GroupID new_egid)
+{
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    TRY(require_promise(Pledge::id));
+
+    return with_mutable_protected_data([&](auto& protected_data) -> ErrorOr<FlatPtr> {
+        auto credentials = this->credentials();
+
+        if (new_rgid == (gid_t)-1)
+            new_rgid = credentials->gid();
+        if (new_egid == (gid_t)-1)
+            new_egid = credentials->egid();
+
+        auto ok = [&credentials](GroupID id) { return id == credentials->gid() || id == credentials->egid() || id == credentials->sgid(); };
+        if (!ok(new_rgid) || !ok(new_egid))
+            return EPERM;
+
+        auto new_credentials = TRY(Credentials::create(
+            credentials->uid(),
+            new_rgid,
+            credentials->euid(),
+            new_egid,
+            credentials->suid(),
+            credentials->sgid(),
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
+
+        if (credentials->egid() != new_egid)
             protected_data.dumpable = false;
 
         protected_data.credentials = move(new_credentials);
@@ -232,7 +280,9 @@ ErrorOr<FlatPtr> Process::sys$setresgid(GroupID new_rgid, GroupID new_egid, Grou
             new_egid,
             credentials->suid(),
             new_sgid,
-            credentials->extra_gids()));
+            credentials->extra_gids(),
+            credentials->sid(),
+            credentials->pgid()));
 
         if (credentials->egid() != new_egid)
             protected_data.dumpable = false;
@@ -264,7 +314,9 @@ ErrorOr<FlatPtr> Process::sys$setgroups(size_t count, Userspace<GroupID const*> 
                 credentials->egid(),
                 credentials->suid(),
                 credentials->sgid(),
-                {}));
+                {},
+                credentials->sid(),
+                credentials->pgid()));
             return 0;
         }
 
@@ -290,7 +342,9 @@ ErrorOr<FlatPtr> Process::sys$setgroups(size_t count, Userspace<GroupID const*> 
             credentials->egid(),
             credentials->suid(),
             credentials->sgid(),
-            new_extra_gids.span()));
+            new_extra_gids.span(),
+            credentials->sid(),
+            credentials->pgid()));
         return 0;
     });
 }

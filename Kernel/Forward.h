@@ -11,44 +11,50 @@
 
 namespace Kernel {
 
+enum class LockRank;
+
 class BlockDevice;
 class CharacterDevice;
 class Coredump;
 class Credentials;
+class CustodyBase;
 class Custody;
 class Device;
+class DeviceControlDevice;
 class DiskCache;
 class DoubleBuffer;
 class File;
+class FATInode;
 class OpenFileDescription;
 class DisplayConnector;
 class FileSystem;
 class FutexQueue;
+class HostnameContext;
 class IPv4Socket;
 class Inode;
 class InodeIdentifier;
 class InodeWatcher;
+class MountFile;
 class KBuffer;
 class KString;
 class LocalSocket;
+class LoopDevice;
 class Mutex;
 class MasterPTY;
 class Mount;
 class PerformanceEventBuffer;
+class PowerStateSwitchTask;
 class ProcFS;
-class ProcFSDirectoryInode;
-class ProcFSExposedComponent;
-class ProcFSExposedDirectory;
 class ProcFSInode;
-class ProcFSProcessInformation;
-class ProcFSRootDirectory;
-class ProcFSSystemBoolean;
-class ProcFSSystemDirectory;
 class Process;
 class ProcessGroup;
+class RAMFS;
+template<LockRank Rank>
 class RecursiveSpinlock;
 class Scheduler;
+class ScopedProcessList;
 class Socket;
+class StorageManagement;
 class SysFS;
 class SysFSDirectory;
 class SysFSRootDirectory;
@@ -60,9 +66,10 @@ class TCPSocket;
 class TTY;
 class Thread;
 class ThreadTracer;
+class RAMFSInode;
 class UDPSocket;
 class UserOrKernelBuffer;
-class VirtualFileSystem;
+class VFSRootContext;
 class WaitQueue;
 class WorkQueue;
 
@@ -73,7 +80,7 @@ class InodeVMObject;
 class MappedROM;
 class MemoryManager;
 class PageDirectory;
-class PhysicalPage;
+class PhysicalRAMPage;
 class PhysicalRegion;
 class PrivateInodeVMObject;
 class Region;
@@ -82,6 +89,7 @@ class VMObject;
 class VirtualRange;
 }
 
+template<LockRank Rank>
 class Spinlock;
 template<typename LockType>
 class SpinlockLocker;

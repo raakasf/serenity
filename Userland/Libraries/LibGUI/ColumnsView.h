@@ -18,9 +18,11 @@ public:
     int model_column() const { return m_model_column; }
     void set_model_column(int column) { m_model_column = column; }
 
-    virtual ModelIndex index_at_event_position(Gfx::IntPoint const&) const override;
+    virtual ModelIndex index_at_event_position(Gfx::IntPoint) const override;
     virtual Gfx::IntRect content_rect(ModelIndex const&) const override;
     virtual Gfx::IntRect paint_invalidation_rect(ModelIndex const&) const override;
+
+    virtual void scroll_into_view(ModelIndex const&, bool scroll_horizontally, bool scroll_vertically) override;
 
 private:
     ColumnsView();
@@ -32,6 +34,7 @@ private:
     int icon_size() const { return 16; }
     int icon_spacing() const { return 2; }
     int text_padding() const { return 2; }
+    int column_separator_width() const { return 1; }
 
     virtual void model_did_update(unsigned flags) override;
     virtual void second_paint_event(PaintEvent&) override;
@@ -51,8 +54,9 @@ private:
         // TODO: per-column vertical scroll?
     };
 
-    Optional<Column> column_at_event_position(Gfx::IntPoint const&) const;
-    ModelIndex index_at_event_position_in_column(Gfx::IntPoint const&, Column const&) const;
+    Optional<Column> column_at_event_position(Gfx::IntPoint) const;
+    ModelIndex index_at_event_position_in_column(Gfx::IntPoint, Column const&) const;
+    Gfx::IntRect index_content_rect(ModelIndex const&);
 
     bool m_rubber_banding { false };
     int m_rubber_band_origin { 0 };

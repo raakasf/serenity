@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -142,17 +142,17 @@ Optional<LocaleID> parse_unicode_locale_id(StringView);
 void canonicalize_unicode_extension_values(StringView key, String& value, bool remove_true);
 Optional<String> canonicalize_unicode_locale_id(LocaleID&);
 
-String const& default_locale();
+StringView default_locale();
 bool is_locale_available(StringView locale);
 
-Span<StringView const> get_available_keyword_values(StringView key);
-Span<StringView const> get_available_calendars();
-Span<StringView const> get_available_collation_case_orderings();
-Span<StringView const> get_available_collation_numeric_orderings();
-Span<StringView const> get_available_collation_types();
-Span<StringView const> get_available_currencies();
-Span<StringView const> get_available_hour_cycles();
-Span<StringView const> get_available_number_systems();
+ReadonlySpan<StringView> get_available_keyword_values(StringView key);
+ReadonlySpan<StringView> get_available_calendars();
+ReadonlySpan<StringView> get_available_collation_case_orderings();
+ReadonlySpan<StringView> get_available_collation_numeric_orderings();
+ReadonlySpan<StringView> get_available_collation_types();
+ReadonlySpan<StringView> get_available_currencies();
+ReadonlySpan<StringView> get_available_hour_cycles();
+ReadonlySpan<StringView> get_available_number_systems();
 
 Style style_from_string(StringView style);
 StringView style_to_string(Style style);

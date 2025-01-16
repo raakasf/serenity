@@ -13,6 +13,7 @@ namespace JS::Temporal {
 
 class PlainYearMonthPrototype final : public PrototypeObject<PlainYearMonthPrototype, PlainYearMonth> {
     JS_PROTOTYPE_OBJECT(PlainYearMonthPrototype, PlainYearMonth, Temporal.PlainYearMonth);
+    JS_DECLARE_ALLOCATOR(PlainYearMonthPrototype);
 
 public:
     virtual void initialize(Realm&) override;
@@ -22,6 +23,7 @@ private:
     explicit PlainYearMonthPrototype(Realm&);
 
     JS_DECLARE_NATIVE_FUNCTION(calendar_getter);
+    JS_DECLARE_NATIVE_FUNCTION(calendar_id_getter);
     JS_DECLARE_NATIVE_FUNCTION(year_getter);
     JS_DECLARE_NATIVE_FUNCTION(month_getter);
     JS_DECLARE_NATIVE_FUNCTION(month_code_getter);

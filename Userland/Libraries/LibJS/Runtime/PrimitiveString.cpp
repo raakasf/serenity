@@ -1,11 +1,15 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/CharacterTypes.h>
+#include <AK/FlyString.h>
+#include <AK/StringBuilder.h>
 #include <AK/Utf16View.h>
+#include <AK/Utf8View.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/PrimitiveString.h>
@@ -15,6 +19,8 @@
 
 namespace JS {
 
+JS_DEFINE_ALLOCATOR(PrimitiveString);
+
 PrimitiveString::PrimitiveString(PrimitiveString& lhs, PrimitiveString& rhs)
     : m_is_rope(true)
     , m_lhs(&lhs)
@@ -23,25 +29,33 @@ PrimitiveString::PrimitiveString(PrimitiveString& lhs, PrimitiveString& rhs)
 }
 
 PrimitiveString::PrimitiveString(String string)
-    : m_has_utf8_string(true)
-    , m_utf8_string(move(string))
+    : m_utf8_string(move(string))
+{
+}
+
+PrimitiveString::PrimitiveString(ByteString string)
+    : m_byte_string(move(string))
 {
 }
 
 PrimitiveString::PrimitiveString(Utf16String string)
-    : m_has_utf16_string(true)
-    , m_utf16_string(move(string))
+    : m_utf16_string(move(string))
 {
 }
 
 PrimitiveString::~PrimitiveString()
 {
-    vm().string_cache().remove(m_utf8_string);
+    if (has_utf8_string())
+        vm().string_cache().remove(*m_utf8_string);
+    if (has_utf16_string())
+        vm().utf16_string_cache().remove(*m_utf16_string);
+    if (has_byte_string())
+        vm().byte_string_cache().remove(*m_byte_string);
 }
 
 void PrimitiveString::visit_edges(Cell::Visitor& visitor)
 {
-    Cell::visit_edges(visitor);
+    Base::visit_edges(visitor);
     if (m_is_rope) {
         visitor.visit(m_lhs);
         visitor.visit(m_rhs);
@@ -55,42 +69,79 @@ bool PrimitiveString::is_empty() const
         return false;
     }
 
-    if (m_has_utf16_string)
-        return m_utf16_string.is_empty();
-    if (m_has_utf8_string)
-        return m_utf8_string.is_empty();
+    if (has_utf16_string())
+        return m_utf16_string->is_empty();
+    if (has_utf8_string())
+        return m_utf8_string->is_empty();
+    if (has_byte_string())
+        return m_byte_string->is_empty();
     VERIFY_NOT_REACHED();
 }
 
-String const& PrimitiveString::string() const
+String PrimitiveString::utf8_string() const
 {
-    resolve_rope_if_needed();
-    if (!m_has_utf8_string) {
-        m_utf8_string = m_utf16_string.to_utf8();
-        m_has_utf8_string = true;
+    resolve_rope_if_needed(EncodingPreference::UTF8);
+
+    if (!has_utf8_string()) {
+        if (has_byte_string())
+            m_utf8_string = MUST(String::from_byte_string(*m_byte_string));
+        else if (has_utf16_string())
+            m_utf8_string = m_utf16_string->to_utf8();
+        else
+            VERIFY_NOT_REACHED();
     }
-    return m_utf8_string;
+
+    return *m_utf8_string;
 }
 
-Utf16String const& PrimitiveString::utf16_string() const
+StringView PrimitiveString::utf8_string_view() const
 {
-    resolve_rope_if_needed();
-    if (!m_has_utf16_string) {
-        m_utf16_string = Utf16String(m_utf8_string);
-        m_has_utf16_string = true;
+    (void)utf8_string();
+    return m_utf8_string->bytes_as_string_view();
+}
+
+ByteString PrimitiveString::byte_string() const
+{
+    resolve_rope_if_needed(EncodingPreference::UTF8);
+
+    if (!has_byte_string()) {
+        if (has_utf8_string())
+            m_byte_string = m_utf8_string->to_byte_string();
+        else if (has_utf16_string())
+            m_byte_string = m_utf16_string->to_byte_string();
+        else
+            VERIFY_NOT_REACHED();
     }
-    return m_utf16_string;
+
+    return *m_byte_string;
+}
+
+Utf16String PrimitiveString::utf16_string() const
+{
+    resolve_rope_if_needed(EncodingPreference::UTF16);
+
+    if (!has_utf16_string()) {
+        if (has_utf8_string()) {
+            m_utf16_string = Utf16String::create(m_utf8_string->bytes_as_string_view());
+        } else {
+            VERIFY(has_byte_string());
+            m_utf16_string = Utf16String::create(*m_byte_string);
+        }
+    }
+
+    return *m_utf16_string;
 }
 
 Utf16View PrimitiveString::utf16_string_view() const
 {
-    return utf16_string().view();
+    (void)utf16_string();
+    return m_utf16_string->view();
 }
 
-Optional<Value> PrimitiveString::get(VM& vm, PropertyKey const& property_key) const
+ThrowCompletionOr<Optional<Value>> PrimitiveString::get(VM& vm, PropertyKey const& property_key) const
 {
     if (property_key.is_symbol())
-        return {};
+        return Optional<Value> {};
     if (property_key.is_string()) {
         if (property_key.as_string() == vm.names.length.as_string()) {
             auto length = utf16_string().length_in_code_units();
@@ -99,70 +150,91 @@ Optional<Value> PrimitiveString::get(VM& vm, PropertyKey const& property_key) co
     }
     auto index = canonical_numeric_index_string(property_key, CanonicalIndexMode::IgnoreNumericRoundtrip);
     if (!index.is_index())
-        return {};
+        return Optional<Value> {};
     auto str = utf16_string_view();
     auto length = str.length_in_code_units();
     if (length <= index.as_index())
-        return {};
-    return js_string(vm, str.substring_view(index.as_index(), 1));
+        return Optional<Value> {};
+    return create(vm, Utf16String::create(str.substring_view(index.as_index(), 1)));
 }
 
-PrimitiveString* js_string(Heap& heap, Utf16View const& view)
-{
-    return js_string(heap, Utf16String(view));
-}
-
-PrimitiveString* js_string(VM& vm, Utf16View const& view)
-{
-    return js_string(vm.heap(), view);
-}
-
-PrimitiveString* js_string(Heap& heap, Utf16String string)
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, Utf16String string)
 {
     if (string.is_empty())
-        return &heap.vm().empty_string();
+        return vm.empty_string();
 
     if (string.length_in_code_units() == 1) {
         u16 code_unit = string.code_unit_at(0);
         if (is_ascii(code_unit))
-            return &heap.vm().single_ascii_character_string(static_cast<u8>(code_unit));
+            return vm.single_ascii_character_string(static_cast<u8>(code_unit));
     }
 
-    return heap.allocate_without_realm<PrimitiveString>(move(string));
+    auto& string_cache = vm.utf16_string_cache();
+    if (auto it = string_cache.find(string); it != string_cache.end())
+        return *it->value;
+
+    auto new_string = vm.heap().allocate_without_realm<PrimitiveString>(string);
+    string_cache.set(move(string), new_string);
+    return *new_string;
 }
 
-PrimitiveString* js_string(VM& vm, Utf16String string)
-{
-    return js_string(vm.heap(), move(string));
-}
-
-PrimitiveString* js_string(Heap& heap, String string)
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, String string)
 {
     if (string.is_empty())
-        return &heap.vm().empty_string();
+        return vm.empty_string();
+
+    if (auto bytes = string.bytes_as_string_view(); bytes.length() == 1) {
+        auto ch = static_cast<u8>(bytes[0]);
+        if (is_ascii(ch))
+            return vm.single_ascii_character_string(ch);
+    }
+
+    auto& string_cache = vm.string_cache();
+    if (auto it = string_cache.find(string); it != string_cache.end())
+        return *it->value;
+
+    auto new_string = vm.heap().allocate_without_realm<PrimitiveString>(string);
+    string_cache.set(move(string), new_string);
+    return *new_string;
+}
+
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, FlyString const& string)
+{
+    return create(vm, string.to_string());
+}
+
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, StringView string)
+{
+    return create(vm, String::from_utf8(string).release_value());
+}
+
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, ByteString string)
+{
+    if (string.is_empty())
+        return vm.empty_string();
 
     if (string.length() == 1) {
         auto ch = static_cast<u8>(string.characters()[0]);
         if (is_ascii(ch))
-            return &heap.vm().single_ascii_character_string(ch);
+            return vm.single_ascii_character_string(ch);
     }
 
-    auto& string_cache = heap.vm().string_cache();
+    auto& string_cache = vm.byte_string_cache();
     auto it = string_cache.find(string);
     if (it == string_cache.end()) {
-        auto* new_string = heap.allocate_without_realm<PrimitiveString>(string);
+        auto new_string = vm.heap().allocate_without_realm<PrimitiveString>(string);
         string_cache.set(move(string), new_string);
-        return new_string;
+        return *new_string;
     }
-    return it->value;
+    return *it->value;
 }
 
-PrimitiveString* js_string(VM& vm, String string)
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, DeprecatedFlyString const& string)
 {
-    return js_string(vm.heap(), move(string));
+    return create(vm, ByteString { string });
 }
 
-PrimitiveString* js_rope_string(VM& vm, PrimitiveString& lhs, PrimitiveString& rhs)
+NonnullGCPtr<PrimitiveString> PrimitiveString::create(VM& vm, PrimitiveString& lhs, PrimitiveString& rhs)
 {
     // We're here to concatenate two strings into a new rope string.
     // However, if any of them are empty, no rope is required.
@@ -171,40 +243,21 @@ PrimitiveString* js_rope_string(VM& vm, PrimitiveString& lhs, PrimitiveString& r
     bool rhs_empty = rhs.is_empty();
 
     if (lhs_empty && rhs_empty)
-        return &vm.empty_string();
+        return vm.empty_string();
 
     if (lhs_empty)
-        return &rhs;
+        return rhs;
 
     if (rhs_empty)
-        return &lhs;
+        return lhs;
 
     return vm.heap().allocate_without_realm<PrimitiveString>(lhs, rhs);
 }
 
-void PrimitiveString::resolve_rope_if_needed() const
+void PrimitiveString::resolve_rope_if_needed(EncodingPreference preference) const
 {
     if (!m_is_rope)
         return;
-
-    // NOTE: Special case for two concatenated UTF-16 strings.
-    //       This is here as an optimization, although I'm unsure how valuable it is.
-    if (m_lhs->has_utf16_string() && m_rhs->has_utf16_string()) {
-        auto const& lhs_string = m_lhs->utf16_string();
-        auto const& rhs_string = m_rhs->utf16_string();
-
-        Vector<u16, 1> combined;
-        combined.ensure_capacity(lhs_string.length_in_code_units() + rhs_string.length_in_code_units());
-        combined.extend(lhs_string.string());
-        combined.extend(rhs_string.string());
-
-        m_utf16_string = Utf16String(move(combined));
-        m_has_utf16_string = true;
-        m_is_rope = false;
-        m_lhs = nullptr;
-        m_rhs = nullptr;
-        return;
-    }
 
     // This vector will hold all the pieces of the rope that need to be assembled
     // into the resolved string.
@@ -216,13 +269,28 @@ void PrimitiveString::resolve_rope_if_needed() const
     stack.append(m_rhs);
     stack.append(m_lhs);
     while (!stack.is_empty()) {
-        auto* current = stack.take_last();
+        auto const* current = stack.take_last();
         if (current->m_is_rope) {
             stack.append(current->m_rhs);
             stack.append(current->m_lhs);
             continue;
         }
         pieces.append(current);
+    }
+
+    if (preference == EncodingPreference::UTF16) {
+        // The caller wants a UTF-16 string, so we can simply concatenate all the pieces
+        // into a UTF-16 code unit buffer and create a Utf16String from it.
+
+        Utf16Data code_units;
+        for (auto const* current : pieces)
+            code_units.extend(current->utf16_string().string());
+
+        m_utf16_string = Utf16String::create(move(code_units));
+        m_is_rope = false;
+        m_lhs = nullptr;
+        m_rhs = nullptr;
+        return;
     }
 
     // Now that we have all the pieces, we can concatenate them using a StringBuilder.
@@ -233,21 +301,21 @@ void PrimitiveString::resolve_rope_if_needed() const
     for (auto const* current : pieces) {
         if (!previous) {
             // This is the very first piece, just append it and continue.
-            builder.append(current->string());
+            builder.append(current->utf8_string());
             previous = current;
             continue;
         }
 
         // Get the UTF-8 representations for both strings.
-        auto const& previous_string_as_utf8 = previous->string();
-        auto const& current_string_as_utf8 = current->string();
+        auto current_string_as_utf8 = current->utf8_string_view();
+        auto previous_string_as_utf8 = previous->utf8_string_view();
 
         // NOTE: Now we need to look at the end of the previous string and the start
         //       of the current string, to see if they should be combined into a surrogate.
 
         // Surrogates encoded as UTF-8 are 3 bytes.
         if ((previous_string_as_utf8.length() < 3) || (current_string_as_utf8.length() < 3)) {
-            builder.append(current->string());
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -255,7 +323,7 @@ void PrimitiveString::resolve_rope_if_needed() const
         // Might the previous string end with a UTF-8 encoded surrogate?
         if ((static_cast<u8>(previous_string_as_utf8[previous_string_as_utf8.length() - 3]) & 0xf0) != 0xe0) {
             // If not, just append the current string and continue.
-            builder.append(current->string());
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -263,7 +331,7 @@ void PrimitiveString::resolve_rope_if_needed() const
         // Might the current string begin with a UTF-8 encoded surrogate?
         if ((static_cast<u8>(current_string_as_utf8[0]) & 0xf0) != 0xe0) {
             // If not, just append the current string and continue.
-            builder.append(current->string());
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -272,7 +340,7 @@ void PrimitiveString::resolve_rope_if_needed() const
         auto low_surrogate = *Utf8View(current_string_as_utf8).begin();
 
         if (!Utf16View::is_high_surrogate(high_surrogate) || !Utf16View::is_low_surrogate(low_surrogate)) {
-            builder.append(current->string());
+            builder.append(current_string_as_utf8);
             previous = current;
             continue;
         }
@@ -286,8 +354,8 @@ void PrimitiveString::resolve_rope_if_needed() const
         previous = current;
     }
 
-    m_utf8_string = builder.to_string();
-    m_has_utf8_string = true;
+    // NOTE: We've already produced valid UTF-8 above, so there's no need for additional validation.
+    m_utf8_string = builder.to_string_without_validation();
     m_is_rope = false;
     m_lhs = nullptr;
     m_rhs = nullptr;

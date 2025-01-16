@@ -38,32 +38,25 @@ public:
 public:
     ~MBRPartitionTable();
 
-#ifdef KERNEL
-    static ErrorOr<NonnullOwnPtr<MBRPartitionTable>> try_to_initialize(Kernel::StorageDevice const&);
-    static OwnPtr<MBRPartitionTable> try_to_initialize(Kernel::StorageDevice const&, u32 start_lba);
-    explicit MBRPartitionTable(Kernel::StorageDevice const&);
-    MBRPartitionTable(Kernel::StorageDevice const&, u32 start_lba);
-#else
-    static ErrorOr<NonnullOwnPtr<MBRPartitionTable>> try_to_initialize(NonnullRefPtr<Core::File>);
-    static OwnPtr<MBRPartitionTable> try_to_initialize(NonnullRefPtr<Core::File>, u32 start_lba);
-    explicit MBRPartitionTable(NonnullRefPtr<Core::File>);
-    MBRPartitionTable(NonnullRefPtr<Core::File>, u32 start_lba);
-#endif
+    static ErrorOr<NonnullOwnPtr<MBRPartitionTable>> try_to_initialize(PartitionableDevice);
+    static OwnPtr<MBRPartitionTable> try_to_initialize(PartitionableDevice, u32 start_lba);
+    explicit MBRPartitionTable(PartitionableDevice);
+    MBRPartitionTable(PartitionableDevice, u32 start_lba);
 
     bool is_protective_mbr() const;
     bool contains_ebr() const;
-    virtual bool is_valid() const override { return m_valid; };
+    virtual bool is_valid() const override { return m_valid; }
 
 protected:
     Header const& header() const;
-    bool is_header_valid() const { return m_header_valid; };
+    bool is_header_valid() const { return m_header_valid; }
 
 private:
     bool read_boot_record();
     bool initialize();
     bool m_valid { false };
     bool m_header_valid { false };
-    const u32 m_start_lba;
+    u32 const m_start_lba;
     ByteBuffer m_cached_header;
 };
 

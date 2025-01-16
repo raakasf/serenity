@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/TypeCasts.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Date.h>
@@ -22,9 +23,11 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(PlainDateTime);
+
 // 5 Temporal.PlainDateTime Objects, https://tc39.es/proposal-temporal/#sec-temporal-plaindatetime-objects
 PlainDateTime::PlainDateTime(i32 iso_year, u8 iso_month, u8 iso_day, u8 iso_hour, u8 iso_minute, u8 iso_second, u16 iso_millisecond, u16 iso_microsecond, u16 iso_nanosecond, Object& calendar, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_iso_year(iso_year)
     , m_iso_month(iso_month)
     , m_iso_day(iso_day)
@@ -41,7 +44,7 @@ PlainDateTime::PlainDateTime(i32 iso_year, u8 iso_month, u8 iso_day, u8 iso_hour
 void PlainDateTime::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_calendar);
+    visitor.visit(m_calendar);
 }
 
 // nsMinInstant - nsPerDay
@@ -74,16 +77,16 @@ bool iso_date_time_within_limits(i32 year, u8 month, u8 day, u8 hour, u8 minute,
 }
 
 // 5.5.2 InterpretTemporalDateTimeFields ( calendar, fields, options ), https://tc39.es/proposal-temporal/#sec-temporal-interprettemporaldatetimefields
-ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM& vm, Object& calendar, Object& fields, Object const& options)
+ThrowCompletionOr<ISODateTime> interpret_temporal_date_time_fields(VM& vm, Object& calendar, Object& fields, Object const* options)
 {
     // 1. Let timeResult be ? ToTemporalTimeRecord(fields).
     auto unregulated_time_result = TRY(to_temporal_time_record(vm, fields));
 
     // 2. Let overflow be ? ToTemporalOverflow(options).
-    auto overflow = TRY(to_temporal_overflow(vm, &options));
+    auto overflow = TRY(to_temporal_overflow(vm, options));
 
     // 3. Let temporalDate be ? CalendarDateFromFields(calendar, fields, options).
-    auto* temporal_date = TRY(calendar_date_from_fields(vm, calendar, fields, &options));
+    auto* temporal_date = TRY(calendar_date_from_fields(vm, calendar, fields, options));
 
     // 4. Let timeResult be ? RegulateTime(timeResult.[[Hour]], timeResult.[[Minute]], timeResult.[[Second]], timeResult.[[Millisecond]], timeResult.[[Microsecond]], timeResult.[[Nanosecond]], overflow).
     auto time_result = TRY(regulate_time(vm, *unregulated_time_result.hour, *unregulated_time_result.minute, *unregulated_time_result.second, *unregulated_time_result.millisecond, *unregulated_time_result.microsecond, *unregulated_time_result.nanosecond, overflow));
@@ -156,7 +159,7 @@ ThrowCompletionOr<PlainDateTime*> to_temporal_date_time(VM& vm, Value item, Obje
         auto* fields = TRY(prepare_temporal_fields(vm, item_object, field_names, Vector<StringView> {}));
 
         // g. Let result be ? InterpretTemporalDateTimeFields(calendar, fields, options).
-        result = TRY(interpret_temporal_date_time_fields(vm, *calendar, *fields, *options));
+        result = TRY(interpret_temporal_date_time_fields(vm, *calendar, *fields, options));
     }
     // 4. Else,
     else {
@@ -176,7 +179,7 @@ ThrowCompletionOr<PlainDateTime*> to_temporal_date_time(VM& vm, Value item, Obje
         VERIFY(is_valid_time(result.hour, result.minute, result.second, result.millisecond, result.microsecond, result.nanosecond));
 
         // f. Let calendar be ? ToTemporalCalendarWithISODefault(result.[[Calendar]]).
-        calendar = TRY(to_temporal_calendar_with_iso_default(vm, result.calendar.has_value() ? js_string(vm, *result.calendar) : js_undefined()));
+        calendar = TRY(to_temporal_calendar_with_iso_default(vm, result.calendar.has_value() ? PrimitiveString::create(vm, *result.calendar) : js_undefined()));
     }
 
     // 5. Return ? CreateTemporalDateTime(result.[[Year]], result.[[Month]], result.[[Day]], result.[[Hour]], result.[[Minute]], result.[[Second]], result.[[Millisecond]], result.[[Microsecond]], result.[[Nanosecond]], calendar).
@@ -239,10 +242,10 @@ ThrowCompletionOr<PlainDateTime*> create_temporal_date_time(VM& vm, i32 iso_year
     // 15. Set object.[[ISOMicrosecond]] to microsecond.
     // 16. Set object.[[ISONanosecond]] to nanosecond.
     // 17. Set object.[[Calendar]] to calendar.
-    auto* object = TRY(ordinary_create_from_constructor<PlainDateTime>(vm, *new_target, &Intrinsics::temporal_plain_date_prototype, iso_year, iso_month, iso_day, hour, minute, second, millisecond, microsecond, nanosecond, calendar));
+    auto object = TRY(ordinary_create_from_constructor<PlainDateTime>(vm, *new_target, &Intrinsics::temporal_plain_date_prototype, iso_year, iso_month, iso_day, hour, minute, second, millisecond, microsecond, nanosecond, calendar));
 
     // 18. Return object.
-    return object;
+    return object.ptr();
 }
 
 // 5.5.6 TemporalDateTimeToString ( isoYear, isoMonth, isoDay, hour, minute, second, millisecond, microsecond, nanosecond, calendar, precision, showCalendar ), https://tc39.es/proposal-temporal/#sec-temporal-temporaldatetimetostring
@@ -257,13 +260,13 @@ ThrowCompletionOr<String> temporal_date_time_to_string(VM& vm, i32 iso_year, u8 
     // 6. Let minute be ToZeroPaddedDecimalString(minute, 2).
 
     // 7. Let seconds be ! FormatSecondsStringPart(second, millisecond, microsecond, nanosecond, precision).
-    auto seconds = format_seconds_string_part(second, millisecond, microsecond, nanosecond, precision);
+    auto seconds = MUST_OR_THROW_OOM(format_seconds_string_part(vm, second, millisecond, microsecond, nanosecond, precision));
 
     // 8. Let calendarString be ? MaybeFormatCalendarAnnotation(calendar, showCalendar).
     auto calendar_string = TRY(maybe_format_calendar_annotation(vm, calendar, show_calendar));
 
     // 9. Return the string-concatenation of year, the code unit 0x002D (HYPHEN-MINUS), month, the code unit 0x002D (HYPHEN-MINUS), day, 0x0054 (LATIN CAPITAL LETTER T), hour, the code unit 0x003A (COLON), minute, seconds, and calendarString.
-    return String::formatted("{}-{:02}-{:02}T{:02}:{:02}{}{}", pad_iso_year(iso_year), iso_month, iso_day, hour, minute, seconds, calendar_string);
+    return TRY_OR_THROW_OOM(vm, String::formatted("{}-{:02}-{:02}T{:02}:{:02}{}{}", MUST_OR_THROW_OOM(pad_iso_year(vm, iso_year)), iso_month, iso_day, hour, minute, seconds, calendar_string));
 }
 
 // 5.5.7 CompareISODateTime ( y1, mon1, d1, h1, min1, s1, ms1, mus1, ns1, y2, mon2, d2, h2, min2, s2, ms2, mus2, ns2 ), https://tc39.es/proposal-temporal/#sec-temporal-compareisodatetime
@@ -297,7 +300,7 @@ ThrowCompletionOr<TemporalPlainDateTime> add_date_time(VM& vm, i32 year, u8 mont
     auto* date_part = MUST(create_temporal_date(vm, year, month, day, calendar));
 
     // 4. Let dateDuration be ? CreateTemporalDuration(years, months, weeks, days + timeResult.[[Days]], 0, 0, 0, 0, 0, 0).
-    auto* date_duration = TRY(create_temporal_duration(vm, years, months, weeks, days + time_result.days, 0, 0, 0, 0, 0, 0));
+    auto date_duration = TRY(create_temporal_duration(vm, years, months, weeks, days + time_result.days, 0, 0, 0, 0, 0, 0));
 
     // 5. Let addedDate be ? CalendarDateAdd(calendar, datePart, dateDuration, options).
     auto* added_date = TRY(calendar_date_add(vm, calendar, date_part, *date_duration, options));
@@ -368,10 +371,12 @@ ThrowCompletionOr<DurationRecord> difference_iso_date_time(VM& vm, i32 year1, u8
     auto date_largest_unit = larger_of_two_temporal_units("day"sv, largest_unit);
 
     // 11. Let untilOptions be ? MergeLargestUnitOption(options, dateLargestUnit).
-    auto* until_options = TRY(merge_largest_unit_option(vm, options, date_largest_unit));
+    auto* until_options = TRY(merge_largest_unit_option(vm, options, TRY_OR_THROW_OOM(vm, String::from_utf8(date_largest_unit))));
 
     // 12. Let dateDifference be ? CalendarDateUntil(calendar, date1, date2, untilOptions).
-    auto* date_difference = TRY(calendar_date_until(vm, calendar, date1, date2, *until_options));
+    // FIXME: AD-HOC calendar records use as this AO is not up to date with latest spec
+    auto calendar_record = TRY(create_calendar_methods_record(vm, NonnullGCPtr<Object> { calendar }, { { CalendarMethod::DateAdd, CalendarMethod::DateUntil } }));
+    auto date_difference = TRY(calendar_date_until(vm, calendar_record, date1, date2, *until_options));
 
     // 13. Let balanceResult be ? BalanceDuration(dateDifference.[[Days]], timeDifference.[[Hours]], timeDifference.[[Minutes]], timeDifference.[[Seconds]], timeDifference.[[Milliseconds]], timeDifference.[[Microseconds]], timeDifference.[[Nanoseconds]], largestUnit).
     auto balance_result = TRY(balance_duration(vm, date_difference->days(), time_difference.hours, time_difference.minutes, time_difference.seconds, time_difference.milliseconds, time_difference.microseconds, Crypto::SignedBigInteger { time_difference.nanoseconds }, largest_unit));
@@ -381,7 +386,7 @@ ThrowCompletionOr<DurationRecord> difference_iso_date_time(VM& vm, i32 year1, u8
 }
 
 // 5.5.11 DifferenceTemporalPlainDateTime ( operation, dateTime, other, options ), https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplaindatetime
-ThrowCompletionOr<Duration*> difference_temporal_plain_date_time(VM& vm, DifferenceOperation operation, PlainDateTime& date_time, Value other_value, Value options_value)
+ThrowCompletionOr<NonnullGCPtr<Duration>> difference_temporal_plain_date_time(VM& vm, DifferenceOperation operation, PlainDateTime& date_time, Value other_value, Value options_value)
 {
     // 1. If operation is since, let sign be -1. Otherwise, let sign be 1.
     i8 sign = operation == DifferenceOperation::Since ? -1 : 1;
@@ -403,7 +408,9 @@ ThrowCompletionOr<Duration*> difference_temporal_plain_date_time(VM& vm, Differe
     auto* relative_to = MUST(create_temporal_date(vm, date_time.iso_year(), date_time.iso_month(), date_time.iso_day(), date_time.calendar()));
 
     // 7. Let roundResult be (? RoundDuration(diff.[[Years]], diff.[[Months]], diff.[[Weeks]], diff.[[Days]], diff.[[Hours]], diff.[[Minutes]], diff.[[Seconds]], diff.[[Milliseconds]], diff.[[Microseconds]], diff.[[Nanoseconds]], settings.[[RoundingIncrement]], settings.[[SmallestUnit]], settings.[[RoundingMode]], relativeTo)).[[DurationRecord]].
-    auto round_result = TRY(round_duration(vm, diff.years, diff.months, diff.weeks, diff.days, diff.hours, diff.minutes, diff.seconds, diff.milliseconds, diff.microseconds, diff.nanoseconds, settings.rounding_increment, settings.smallest_unit, settings.rounding_mode, relative_to)).duration_record;
+    // FIXME: AD-HOC calendar records use as this AO is not up to date with latest spec
+    auto calendar_record = TRY(create_calendar_methods_record(vm, NonnullGCPtr<Object> { date_time.calendar() }, { { CalendarMethod::DateAdd, CalendarMethod::DateUntil } }));
+    auto round_result = TRY(round_duration(vm, diff.years, diff.months, diff.weeks, diff.days, diff.hours, diff.minutes, diff.seconds, diff.milliseconds, diff.microseconds, diff.nanoseconds, settings.rounding_increment, settings.smallest_unit, settings.rounding_mode, relative_to, calendar_record)).duration_record;
 
     // 8. Let result be ? BalanceDuration(roundResult.[[Days]], roundResult.[[Hours]], roundResult.[[Minutes]], roundResult.[[Seconds]], roundResult.[[Milliseconds]], roundResult.[[Microseconds]], roundResult.[[Nanoseconds]], settings.[[LargestUnit]]).
     auto result = MUST(balance_duration(vm, round_result.days, round_result.hours, round_result.minutes, round_result.seconds, round_result.milliseconds, round_result.microseconds, Crypto::SignedBigInteger { round_result.nanoseconds }, settings.largest_unit));

@@ -235,9 +235,10 @@ int MathematicalValue::logarithmic_floor() const
         [](double value) {
             return static_cast<int>(floor(log10(value)));
         },
-        [](Crypto::SignedBigInteger const& value) {
+        [&](Crypto::SignedBigInteger const& value) {
             // FIXME: Can we do this without string conversion?
-            return static_cast<int>(value.to_base(10).length() - 1);
+            auto value_as_string = MUST(value.to_base(10));
+            return static_cast<int>(value_as_string.bytes_as_string_view().length() - 1);
         },
         [](auto) -> int { VERIFY_NOT_REACHED(); });
 }
@@ -296,9 +297,13 @@ bool MathematicalValue::is_zero() const
 String MathematicalValue::to_string() const
 {
     return m_value.visit(
-        [](double value) { return Value(value).to_string_without_side_effects(); },
-        [](Crypto::SignedBigInteger const& value) { return value.to_base(10); },
-        [](auto) -> String { VERIFY_NOT_REACHED(); });
+        [&](double value) {
+            return number_to_string(value, NumberToStringMode::WithoutExponent);
+        },
+        [&](Crypto::SignedBigInteger const& value) {
+            return MUST(value.to_base(10));
+        },
+        [&](auto) -> String { VERIFY_NOT_REACHED(); });
 }
 
 Value MathematicalValue::to_value(VM& vm) const
@@ -308,7 +313,7 @@ Value MathematicalValue::to_value(VM& vm) const
             return Value(value);
         },
         [&](Crypto::SignedBigInteger const& value) {
-            return Value(js_bigint(vm, value));
+            return Value(BigInt::create(vm, value));
         },
         [](auto symbol) {
             switch (symbol) {

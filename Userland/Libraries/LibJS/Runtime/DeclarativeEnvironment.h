@@ -6,9 +6,9 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/DeprecatedFlyString.h>
 #include <AK/HashMap.h>
-#include <LibJS/AST.h>
+#include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Environment.h>
 #include <LibJS/Runtime/Value.h>
@@ -17,9 +17,10 @@ namespace JS {
 
 class DeclarativeEnvironment : public Environment {
     JS_ENVIRONMENT(DeclarativeEnvironment, Environment);
+    JS_DECLARE_ALLOCATOR(DeclarativeEnvironment);
 
     struct Binding {
-        FlyString name;
+        DeprecatedFlyString name;
         Value value;
         bool strict { false };
         bool mutable_ { false };
@@ -32,21 +33,21 @@ public:
 
     virtual ~DeclarativeEnvironment() override = default;
 
-    virtual ThrowCompletionOr<bool> has_binding(FlyString const& name, Optional<size_t>* = nullptr) const override;
-    virtual ThrowCompletionOr<void> create_mutable_binding(VM&, FlyString const& name, bool can_be_deleted) override;
-    virtual ThrowCompletionOr<void> create_immutable_binding(VM&, FlyString const& name, bool strict) override;
-    virtual ThrowCompletionOr<void> initialize_binding(VM&, FlyString const& name, Value) override;
-    virtual ThrowCompletionOr<void> set_mutable_binding(VM&, FlyString const& name, Value, bool strict) override;
-    virtual ThrowCompletionOr<Value> get_binding_value(VM&, FlyString const& name, bool strict) override;
-    virtual ThrowCompletionOr<bool> delete_binding(VM&, FlyString const& name) override;
+    virtual ThrowCompletionOr<bool> has_binding(DeprecatedFlyString const& name, Optional<size_t>* = nullptr) const override final;
+    virtual ThrowCompletionOr<void> create_mutable_binding(VM&, DeprecatedFlyString const& name, bool can_be_deleted) override final;
+    virtual ThrowCompletionOr<void> create_immutable_binding(VM&, DeprecatedFlyString const& name, bool strict) override final;
+    virtual ThrowCompletionOr<void> initialize_binding(VM&, DeprecatedFlyString const& name, Value, InitializeBindingHint) override final;
+    virtual ThrowCompletionOr<void> set_mutable_binding(VM&, DeprecatedFlyString const& name, Value, bool strict) override final;
+    virtual ThrowCompletionOr<Value> get_binding_value(VM&, DeprecatedFlyString const& name, bool strict) override;
+    virtual ThrowCompletionOr<bool> delete_binding(VM&, DeprecatedFlyString const& name) override;
 
-    void initialize_or_set_mutable_binding(Badge<ScopeNode>, VM&, FlyString const& name, Value value);
-    ThrowCompletionOr<void> initialize_or_set_mutable_binding(VM&, FlyString const& name, Value value);
+    void initialize_or_set_mutable_binding(Badge<ScopeNode>, VM&, DeprecatedFlyString const& name, Value value);
+    ThrowCompletionOr<void> initialize_or_set_mutable_binding(VM&, DeprecatedFlyString const& name, Value value);
 
     // This is not a method defined in the spec! Do not use this in any LibJS (or other spec related) code.
-    [[nodiscard]] Vector<FlyString> bindings() const
+    [[nodiscard]] Vector<DeprecatedFlyString> bindings() const
     {
-        Vector<FlyString> names;
+        Vector<DeprecatedFlyString> names;
         names.ensure_capacity(m_bindings.size());
 
         for (auto const& binding : m_bindings)
@@ -55,18 +56,30 @@ public:
         return names;
     }
 
+    ThrowCompletionOr<void> initialize_binding_direct(VM&, size_t index, Value, InitializeBindingHint);
     ThrowCompletionOr<void> set_mutable_binding_direct(VM&, size_t index, Value, bool strict);
-    ThrowCompletionOr<Value> get_binding_value_direct(VM&, size_t index, bool strict);
+    ThrowCompletionOr<Value> get_binding_value_direct(VM&, size_t index) const;
+
+    void shrink_to_fit();
+
+    void ensure_capacity(size_t needed_capacity)
+    {
+        m_bindings.ensure_capacity(needed_capacity);
+    }
+
+    [[nodiscard]] u64 environment_serial_number() const { return m_environment_serial_number; }
 
 private:
-    ThrowCompletionOr<void> initialize_binding_direct(VM&, Binding&, Value);
-    ThrowCompletionOr<Value> get_binding_value_direct(VM&, Binding&, bool strict);
+    ThrowCompletionOr<Value> get_binding_value_direct(VM&, Binding const&) const;
     ThrowCompletionOr<void> set_mutable_binding_direct(VM&, Binding&, Value, bool strict);
+
+    friend Completion dispose_resources(VM&, GCPtr<DeclarativeEnvironment>, Completion);
+    Vector<DisposableResource> const& disposable_resource_stack() const { return m_disposable_resource_stack; }
 
 protected:
     DeclarativeEnvironment();
     explicit DeclarativeEnvironment(Environment* parent_environment);
-    DeclarativeEnvironment(Environment* parent_environment, Span<Binding const> bindings);
+    DeclarativeEnvironment(Environment* parent_environment, ReadonlySpan<Binding> bindings);
 
     virtual void visit_edges(Visitor&) override;
 
@@ -100,23 +113,37 @@ protected:
 
     friend class ModuleEnvironment;
 
-    virtual Optional<BindingAndIndex> find_binding_and_index(FlyString const& name) const
+    virtual Optional<BindingAndIndex> find_binding_and_index(DeprecatedFlyString const& name) const
     {
-        auto it = m_bindings.find_if([&](auto const& binding) {
-            return binding.name == name;
-        });
+        if (auto it = m_bindings_assoc.find(name); it != m_bindings_assoc.end()) {
+            return BindingAndIndex { const_cast<Binding*>(&m_bindings.at(it->value)), it->value };
+        }
 
-        if (it == m_bindings.end())
-            return {};
-
-        return BindingAndIndex { const_cast<Binding*>(&(*it)), it.index() };
+        return {};
     }
 
 private:
-    virtual bool is_declarative_environment() const override { return true; }
-
     Vector<Binding> m_bindings;
+    HashMap<DeprecatedFlyString, size_t> m_bindings_assoc;
+    Vector<DisposableResource> m_disposable_resource_stack;
+
+    u64 m_environment_serial_number { 0 };
 };
+
+inline ThrowCompletionOr<Value> DeclarativeEnvironment::get_binding_value_direct(VM& vm, size_t index) const
+{
+    return get_binding_value_direct(vm, m_bindings[index]);
+}
+
+inline ThrowCompletionOr<Value> DeclarativeEnvironment::get_binding_value_direct(VM&, Binding const& binding) const
+{
+    // 2. If the binding for N in envRec is an uninitialized binding, throw a ReferenceError exception.
+    if (!binding.initialized)
+        return vm().throw_completion<ReferenceError>(ErrorType::BindingNotInitialized, binding.name);
+
+    // 3. Return the value currently bound to N in envRec.
+    return binding.value;
+}
 
 template<>
 inline bool Environment::fast_is<DeclarativeEnvironment>() const { return is_declarative_environment(); }

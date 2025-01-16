@@ -12,7 +12,7 @@
 
 namespace Markdown {
 
-String Document::render_to_html(StringView extra_head_contents) const
+ByteString Document::render_to_html(StringView extra_head_contents) const
 {
     StringBuilder builder;
     builder.append(R"~~~(<!DOCTYPE html>
@@ -35,17 +35,23 @@ String Document::render_to_html(StringView extra_head_contents) const
 </body>
 </html>)~~~"sv);
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
-String Document::render_to_inline_html() const
+ByteString Document::render_to_inline_html() const
 {
     return m_container->render_to_html();
 }
 
-String Document::render_for_terminal(size_t view_width) const
+ErrorOr<String> Document::render_for_terminal(size_t view_width) const
 {
-    return m_container->render_for_terminal(view_width);
+    StringBuilder builder;
+    for (auto& line : m_container->render_lines_for_terminal(view_width)) {
+        TRY(builder.try_append(line));
+        TRY(builder.try_append("\n"sv));
+    }
+
+    return builder.to_string();
 }
 
 RecursionDecision Document::walk(Visitor& visitor) const

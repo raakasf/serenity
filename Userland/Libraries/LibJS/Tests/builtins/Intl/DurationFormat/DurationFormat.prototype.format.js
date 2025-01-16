@@ -32,7 +32,7 @@ describe("correct behavior", () => {
             "1y 2m 3w 3d 4h 5m 6s 7ms 8μs 9ns"
         );
         expect(new Intl.DurationFormat("en", { style: "digital" }).format(duration)).toBe(
-            "1 yr 2 mths 3 wks 3 days 4:05:06"
+            "1 yr, 2 mths, 3 wks, 3 days, 4:05:06"
         );
         expect(
             new Intl.DurationFormat("en", {
@@ -81,8 +81,8 @@ describe("correct behavior", () => {
         };
 
         const en = new Intl.DurationFormat("en", { style: "digital" });
-        expect(en.format(duration1)).toBe("1 yr 2 mths 3 wks 3 days 0:00:00");
-        expect(en.format(duration2)).toBe("1 yr 2 mths 3 wks 3 days 4:05:06");
+        expect(en.format(duration1)).toBe("1 yr, 2 mths, 3 wks, 3 days, 0:00:00");
+        expect(en.format(duration2)).toBe("1 yr, 2 mths, 3 wks, 3 days, 4:05:06");
 
         const de = new Intl.DurationFormat("de", { style: "digital" });
         expect(de.format(duration1)).toBe("1 J, 2 Mon., 3 Wo., 3 Tg. und 0:00:00");
@@ -92,7 +92,11 @@ describe("correct behavior", () => {
 
 describe("errors", () => {
     test("non-object duration records", () => {
-        [-100, Infinity, NaN, "hello", 152n, Symbol("foo")].forEach(value => {
+        expect(() => {
+            new Intl.DurationFormat().format("hello");
+        }).toThrowWithMessage(RangeError, "is not an object");
+
+        [-100, Infinity, NaN, 152n, Symbol("foo"), true, null, undefined].forEach(value => {
             expect(() => {
                 new Intl.DurationFormat().format(value);
             }).toThrowWithMessage(TypeError, "is not an object");
