@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2021-2023, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -7,38 +7,40 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/LegacyPlatformObject.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/dom.html#domstringmap
-class DOMStringMap final : public Bindings::LegacyPlatformObject {
-    WEB_PLATFORM_OBJECT(DOMStringMap, Bindings::LegacyPlatformObject);
+class DOMStringMap final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(DOMStringMap, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(DOMStringMap);
 
 public:
-    static JS::NonnullGCPtr<DOMStringMap> create(DOM::Element&);
+    [[nodiscard]] static JS::NonnullGCPtr<DOMStringMap> create(DOM::Element&);
 
     virtual ~DOMStringMap() override;
 
-    String determine_value_of_named_property(String const&) const;
+    String determine_value_of_named_property(FlyString const&) const;
 
-    WebIDL::ExceptionOr<void> set_value_of_new_named_property(String const&, String const&);
-    WebIDL::ExceptionOr<void> set_value_of_existing_named_property(String const&, String const&);
+    virtual WebIDL::ExceptionOr<void> set_value_of_new_named_property(String const&, JS::Value) override;
+    virtual WebIDL::ExceptionOr<void> set_value_of_existing_named_property(String const&, JS::Value) override;
 
-    bool delete_existing_named_property(String const&);
+    virtual WebIDL::ExceptionOr<DidDeletionFail> delete_value(String const&) override;
 
 private:
     explicit DOMStringMap(DOM::Element&);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    // ^LegacyPlatformObject
+    // ^PlatformObject
     virtual JS::Value named_item_value(FlyString const&) const override;
-    virtual Vector<String> supported_property_names() const override;
+    virtual Vector<FlyString> supported_property_names() const override;
 
     struct NameValuePair {
-        String name;
+        FlyString name;
         String value;
     };
 

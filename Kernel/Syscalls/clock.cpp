@@ -5,14 +5,14 @@
  */
 
 #include <AK/Time.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 #include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
 ErrorOr<FlatPtr> Process::sys$map_time_page()
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
 
     auto& vmobject = TimeManagement::the().time_page_vmobject();
@@ -44,7 +44,7 @@ ErrorOr<FlatPtr> Process::sys$clock_settime(clockid_t clock_id, Userspace<timesp
     if (!credentials->is_superuser())
         return EPERM;
 
-    auto time = TRY(copy_time_from_user(user_ts));
+    auto time = UnixDateTime::epoch() + TRY(copy_time_from_user(user_ts));
 
     switch (clock_id) {
     case CLOCK_REALTIME:
@@ -82,7 +82,7 @@ ErrorOr<FlatPtr> Process::sys$clock_nanosleep(Userspace<Syscall::SC_clock_nanosl
     if (is_absolute) {
         was_interrupted = Thread::current()->sleep_until(params.clock_id, requested_sleep).was_interrupted();
     } else {
-        Time remaining_sleep;
+        Duration remaining_sleep;
         was_interrupted = Thread::current()->sleep(params.clock_id, requested_sleep, &remaining_sleep).was_interrupted();
         timespec remaining_sleep_ts = remaining_sleep.to_timespec();
         if (was_interrupted && params.remaining_sleep) {
@@ -98,16 +98,11 @@ ErrorOr<FlatPtr> Process::sys$clock_getres(Userspace<Syscall::SC_clock_getres_pa
 {
     VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
-    timespec ts {};
-    switch (params.clock_id) {
-    case CLOCK_REALTIME:
-        ts.tv_sec = 0;
-        ts.tv_nsec = 1000000000 / _SC_CLK_TCK;
-        TRY(copy_to_user(params.result, &ts));
-        break;
-    default:
-        return EINVAL;
-    }
+
+    TRY(TimeManagement::validate_clock_id(params.clock_id));
+
+    auto ts = TimeManagement::the().clock_resolution().to_timespec();
+    TRY(copy_to_user(params.result, &ts));
     return 0;
 }
 
@@ -115,9 +110,8 @@ ErrorOr<FlatPtr> Process::sys$adjtime(Userspace<timeval const*> user_delta, User
 {
     VERIFY_NO_PROCESS_BIG_LOCK(this);
     if (user_old_delta) {
-        timespec old_delta_ts = TimeManagement::the().remaining_epoch_time_adjustment();
-        timeval old_delta;
-        timespec_to_timeval(old_delta_ts, old_delta);
+        auto old_delta_duration = TimeManagement::the().remaining_epoch_time_adjustment();
+        auto old_delta = old_delta_duration.to_timeval();
         TRY(copy_to_user(user_old_delta, &old_delta));
     }
 
@@ -128,8 +122,7 @@ ErrorOr<FlatPtr> Process::sys$adjtime(Userspace<timeval const*> user_delta, User
             return EPERM;
         auto delta = TRY(copy_time_from_user(user_delta));
 
-        // FIXME: Should use AK::Time internally
-        TimeManagement::the().set_remaining_epoch_time_adjustment(delta.to_timespec());
+        TimeManagement::the().set_remaining_epoch_time_adjustment(delta);
     }
 
     return 0;

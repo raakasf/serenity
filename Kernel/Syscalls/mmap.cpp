@@ -5,74 +5,31 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/API/VirtualMemoryAnnotations.h>
+#include <Kernel/Arch/CPU.h>
+#include <Kernel/Arch/PageDirectory.h>
 #include <Kernel/Arch/SafeMem.h>
 #include <Kernel/Arch/SmapDisabler.h>
-#include <Kernel/Arch/x86/MSR.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/Memory/AnonymousVMObject.h>
 #include <Kernel/Memory/MemoryManager.h>
-#include <Kernel/Memory/PageDirectory.h>
 #include <Kernel/Memory/PrivateInodeVMObject.h>
 #include <Kernel/Memory/Region.h>
 #include <Kernel/Memory/SharedInodeVMObject.h>
-#include <Kernel/PerformanceEventBuffer.h>
-#include <Kernel/PerformanceManager.h>
-#include <Kernel/Process.h>
-#include <LibC/limits.h>
+#include <Kernel/Tasks/PerformanceEventBuffer.h>
+#include <Kernel/Tasks/PerformanceManager.h>
+#include <Kernel/Tasks/Process.h>
 #include <LibELF/Validation.h>
+
+#if ARCH(X86_64)
+#    include <Kernel/Arch/x86_64/MSR.h>
+#endif
 
 namespace Kernel {
 
-static bool should_make_executable_exception_for_dynamic_loader(bool make_readable, bool make_writable, bool make_executable, Memory::Region const& region)
-{
-    // Normally we don't allow W -> X transitions, but we have to make an exception
-    // for the dynamic loader, which needs to do this after performing text relocations.
-
-    // FIXME: Investigate whether we could get rid of all text relocations entirely.
-
-    // The exception is only made if all the following criteria is fulfilled:
-
-    // The region must be RW
-    if (!(region.is_readable() && region.is_writable() && !region.is_executable()))
-        return false;
-
-    // The region wants to become RX
-    if (!(make_readable && !make_writable && make_executable))
-        return false;
-
-    // The region is backed by a file
-    if (!region.vmobject().is_inode())
-        return false;
-
-    // The file mapping is private, not shared (no relocations in a shared mapping!)
-    if (!region.vmobject().is_private_inode())
-        return false;
-
-    auto const& inode_vm = static_cast<Memory::InodeVMObject const&>(region.vmobject());
-    auto const& inode = inode_vm.inode();
-
-    ElfW(Ehdr) header;
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer((u8*)&header);
-    auto result = inode.read_bytes(0, sizeof(header), buffer, nullptr);
-    if (result.is_error() || result.value() != sizeof(header))
-        return false;
-
-    // The file is a valid ELF binary
-    if (!ELF::validate_elf_header(header, inode.size()))
-        return false;
-
-    // The file is an ELF shared object
-    if (header.e_type != ET_DYN)
-        return false;
-
-    // FIXME: Are there any additional checks/validations we could do here?
-    return true;
-}
-
 ErrorOr<void> Process::validate_mmap_prot(int prot, bool map_stack, bool map_anonymous, Memory::Region const* region) const
 {
-    bool make_readable = prot & PROT_READ;
     bool make_writable = prot & PROT_WRITE;
     bool make_executable = prot & PROT_EXEC;
 
@@ -92,13 +49,8 @@ ErrorOr<void> Process::validate_mmap_prot(int prot, bool map_stack, bool map_ano
         if (make_writable && region->has_been_executable())
             return EINVAL;
 
-        if (make_executable && region->has_been_writable()) {
-            if (should_make_executable_exception_for_dynamic_loader(make_readable, make_writable, make_executable, *region)) {
-                return {};
-            } else {
-                return EINVAL;
-            };
-        }
+        if (make_executable && region->has_been_writable() && should_reject_transition_to_executable_from_writable_prot())
+            return EINVAL;
     }
 
     return {};
@@ -106,7 +58,6 @@ ErrorOr<void> Process::validate_mmap_prot(int prot, bool map_stack, bool map_ano
 
 ErrorOr<void> Process::validate_inode_mmap_prot(int prot, bool readable_description, bool description_writable, bool map_shared) const
 {
-    auto credentials = this->credentials();
     if ((prot & PROT_READ) && !readable_description)
         return EACCES;
 
@@ -122,7 +73,7 @@ ErrorOr<void> Process::validate_inode_mmap_prot(int prot, bool readable_descript
 
 ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     auto params = TRY(copy_typed_from_user(user_params));
 
@@ -138,7 +89,7 @@ ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> use
         TRY(require_promise(Pledge::prot_exec));
     }
 
-    if (prot & MAP_FIXED || prot & MAP_FIXED_NOREPLACE) {
+    if (flags & MAP_FIXED || flags & MAP_FIXED_NOREPLACE) {
         TRY(require_promise(Pledge::map_fixed));
     }
 
@@ -192,9 +143,10 @@ ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> use
 
     Memory::Region* region = nullptr;
 
-    LockRefPtr<OpenFileDescription> description;
+    RefPtr<OpenFileDescription> description;
     LockRefPtr<Memory::VMObject> vmobject;
     u64 used_offset = 0;
+    auto memory_type = Memory::MemoryType::Normal;
 
     if (map_anonymous) {
         auto strategy = map_noreserve ? AllocationStrategy::None : AllocationStrategy::Reserve;
@@ -223,7 +175,9 @@ ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> use
         if (description->inode())
             TRY(validate_inode_mmap_prot(prot, description->is_readable(), description->is_writable(), map_shared));
 
-        vmobject = TRY(description->vmobject_for_mmap(*this, requested_range, used_offset, map_shared));
+        auto vmobject_and_memory_type = TRY(description->vmobject_for_mmap(*this, requested_range, used_offset, map_shared));
+        vmobject = vmobject_and_memory_type.vmobject;
+        memory_type = vmobject_and_memory_type.memory_type;
     }
 
     return address_space().with([&](auto& space) -> ErrorOr<FlatPtr> {
@@ -240,7 +194,8 @@ ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> use
             used_offset,
             {},
             prot,
-            map_shared));
+            map_shared,
+            memory_type));
 
         if (!region)
             return ENOMEM;
@@ -265,7 +220,7 @@ ErrorOr<FlatPtr> Process::sys$mmap(Userspace<Syscall::SC_mmap_params const*> use
 
 ErrorOr<FlatPtr> Process::sys$mprotect(Userspace<void*> addr, size_t size, int prot)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
 
     if (prot & PROT_EXEC) {
@@ -283,6 +238,8 @@ ErrorOr<FlatPtr> Process::sys$mprotect(Userspace<void*> addr, size_t size, int p
         if (auto* whole_region = space->find_region_from_range(range_to_mprotect)) {
             if (!whole_region->is_mmap())
                 return EPERM;
+            if (whole_region->is_immutable())
+                return EPERM;
             TRY(validate_mmap_prot(prot, whole_region->is_stack(), whole_region->vmobject().is_anonymous(), whole_region));
             if (whole_region->access() == Memory::prot_to_region_access_flags(prot))
                 return 0;
@@ -299,6 +256,8 @@ ErrorOr<FlatPtr> Process::sys$mprotect(Userspace<void*> addr, size_t size, int p
         // Check if we can carve out the desired range from an existing region
         if (auto* old_region = space->find_region_containing(range_to_mprotect)) {
             if (!old_region->is_mmap())
+                return EPERM;
+            if (old_region->is_immutable())
                 return EPERM;
             TRY(validate_mmap_prot(prot, old_region->is_stack(), old_region->vmobject().is_anonymous(), old_region));
             if (old_region->access() == Memory::prot_to_region_access_flags(prot))
@@ -334,6 +293,8 @@ ErrorOr<FlatPtr> Process::sys$mprotect(Userspace<void*> addr, size_t size, int p
             // Check that all intersecting regions are compatible.
             for (auto const* region : regions) {
                 if (!region->is_mmap())
+                    return EPERM;
+                if (region->is_immutable())
                     return EPERM;
                 TRY(validate_mmap_prot(prot, region->is_stack(), region->vmobject().is_anonymous(), region));
                 if (region->vmobject().is_inode())
@@ -397,7 +358,7 @@ ErrorOr<FlatPtr> Process::sys$mprotect(Userspace<void*> addr, size_t size, int p
 
 ErrorOr<FlatPtr> Process::sys$madvise(Userspace<void*> address, size_t size, int advice)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
 
     auto range_to_madvise = TRY(Memory::expand_range_to_page_boundaries(address.ptr(), size));
@@ -413,6 +374,8 @@ ErrorOr<FlatPtr> Process::sys$madvise(Userspace<void*> address, size_t size, int
         if (!region)
             return EINVAL;
         if (!region->is_mmap())
+            return EPERM;
+        if (region->is_immutable())
             return EPERM;
         if (advice == MADV_SET_VOLATILE || advice == MADV_SET_NONVOLATILE) {
             if (!region->vmobject().is_anonymous())
@@ -430,7 +393,7 @@ ErrorOr<FlatPtr> Process::sys$madvise(Userspace<void*> address, size_t size, int
 
 ErrorOr<FlatPtr> Process::sys$set_mmap_name(Userspace<Syscall::SC_set_mmap_name_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     auto params = TRY(copy_typed_from_user(user_params));
 
@@ -447,6 +410,9 @@ ErrorOr<FlatPtr> Process::sys$set_mmap_name(Userspace<Syscall::SC_set_mmap_name_
         if (!region->is_mmap())
             return EPERM;
 
+        if (region->is_immutable())
+            return EPERM;
+
         region->set_name(move(name));
         PerformanceManager::add_mmap_perf_event(*this, *region);
 
@@ -456,7 +422,7 @@ ErrorOr<FlatPtr> Process::sys$set_mmap_name(Userspace<Syscall::SC_set_mmap_name_
 
 ErrorOr<FlatPtr> Process::sys$munmap(Userspace<void*> addr, size_t size)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     TRY(address_space().with([&](auto& space) {
         return space->unmap_mmap_range(addr.vaddr(), size);
@@ -466,7 +432,7 @@ ErrorOr<FlatPtr> Process::sys$munmap(Userspace<void*> addr, size_t size)
 
 ErrorOr<FlatPtr> Process::sys$mremap(Userspace<Syscall::SC_mremap_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     auto params = TRY(copy_typed_from_user(user_params));
 
@@ -478,6 +444,9 @@ ErrorOr<FlatPtr> Process::sys$mremap(Userspace<Syscall::SC_mremap_params const*>
             return EINVAL;
 
         if (!old_region->is_mmap())
+            return EPERM;
+
+        if (old_region->is_immutable())
             return EPERM;
 
         if (old_region->vmobject().is_shared_inode() && params.flags & MAP_PRIVATE && !(params.flags & (MAP_ANONYMOUS | MAP_NORESERVE))) {
@@ -505,92 +474,42 @@ ErrorOr<FlatPtr> Process::sys$mremap(Userspace<Syscall::SC_mremap_params const*>
     });
 }
 
-ErrorOr<FlatPtr> Process::sys$allocate_tls(Userspace<char const*> initial_data, size_t size)
+ErrorOr<FlatPtr> Process::sys$annotate_mapping(Userspace<void*> address, int flags)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
-    TRY(require_promise(Pledge::stdio));
-
-    if (!size || size % PAGE_SIZE != 0)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
+    if (flags == to_underlying(VirtualMemoryRangeFlags::None))
         return EINVAL;
 
-    if (!m_master_tls_region.is_null())
-        return EEXIST;
+    if (!address)
+        return EINVAL;
 
-    if (thread_count() != 1)
+    if (!Memory::is_user_address(address.vaddr()))
         return EFAULT;
 
-    Thread* main_thread = nullptr;
-    bool multiple_threads = false;
-    for_each_thread([&main_thread, &multiple_threads](auto& thread) {
-        if (main_thread)
-            multiple_threads = true;
-        main_thread = &thread;
-        return IterationDecision::Break;
-    });
-    VERIFY(main_thread);
-
-    if (multiple_threads)
-        return EINVAL;
-
     return address_space().with([&](auto& space) -> ErrorOr<FlatPtr> {
-        auto* region = TRY(space->allocate_region(Memory::RandomizeVirtualAddress::Yes, {}, size, PAGE_SIZE, "Master TLS"sv, PROT_READ | PROT_WRITE));
-
-        m_master_tls_region = TRY(region->try_make_weak_ptr());
-        m_master_tls_size = size;
-        m_master_tls_alignment = PAGE_SIZE;
-
-        {
-            Kernel::SmapDisabler disabler;
-            void* fault_at;
-            if (!Kernel::safe_memcpy((char*)m_master_tls_region.unsafe_ptr()->vaddr().as_ptr(), (char*)initial_data.ptr(), size, fault_at))
-                return EFAULT;
-        }
-
-        TRY(main_thread->make_thread_specific_region({}));
-
-#if ARCH(I386)
-        auto& tls_descriptor = Processor::current().get_gdt_entry(GDT_SELECTOR_TLS);
-        tls_descriptor.set_base(main_thread->thread_specific_data());
-        tls_descriptor.set_limit(main_thread->thread_specific_region_size());
-#else
-        MSR fs_base_msr(MSR_FS_BASE);
-        fs_base_msr.set(main_thread->thread_specific_data().get());
-#endif
-
-        return m_master_tls_region.unsafe_ptr()->vaddr().get();
-    });
-}
-
-ErrorOr<FlatPtr> Process::sys$msyscall(Userspace<void*> address)
-{
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this);
-
-    return address_space().with([&](auto& space) -> ErrorOr<FlatPtr> {
-        if (space->enforces_syscall_regions())
+        if (space->enforces_syscall_regions() && (flags & to_underlying(VirtualMemoryRangeFlags::SyscallCode)))
             return EPERM;
-
-        if (!address) {
-            space->set_enforces_syscall_regions(true);
-            return 0;
-        }
-
-        if (!Memory::is_user_address(address.vaddr()))
-            return EFAULT;
 
         auto* region = space->find_region_containing(Memory::VirtualRange { address.vaddr(), 1 });
         if (!region)
             return EINVAL;
 
-        if (!region->is_mmap())
+        if (!region->is_mmap() && !region->is_initially_loaded_executable_segment())
             return EINVAL;
+        if (region->is_immutable())
+            return EPERM;
 
-        region->set_syscall_region(true);
+        if (flags & to_underlying(VirtualMemoryRangeFlags::SyscallCode))
+            region->set_syscall_region(true);
+        if (flags & to_underlying(VirtualMemoryRangeFlags::Immutable))
+            region->set_immutable();
         return 0;
     });
 }
 
 ErrorOr<FlatPtr> Process::sys$msync(Userspace<void*> address, size_t size, int flags)
 {
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     if ((flags & (MS_SYNC | MS_ASYNC | MS_INVALIDATE)) != flags)
         return EINVAL;
 

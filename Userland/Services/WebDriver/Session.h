@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2022, Florent Castelli <florent.castelli@gmail.com>
  * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022-2024, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,89 +10,85 @@
 
 #include <AK/Error.h>
 #include <AK/JsonValue.h>
+#include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
-#include <WebDriver/BrowserConnection.h>
-#include <WebDriver/TimeoutsConfiguration.h>
-#include <WebDriver/WebDriverError.h>
+#include <AK/String.h>
+#include <LibCore/Promise.h>
+#include <LibWeb/WebDriver/Capabilities.h>
+#include <LibWeb/WebDriver/Error.h>
+#include <LibWeb/WebDriver/Response.h>
+#include <WebDriver/WebContentConnection.h>
 #include <unistd.h>
 
 namespace WebDriver {
 
-class Session {
+struct LaunchBrowserCallbacks;
+
+class Session : public RefCounted<Session> {
 public:
-    Session(unsigned session_id, NonnullRefPtr<Client> client);
+    Session(unsigned session_id, NonnullRefPtr<Client> client, Web::WebDriver::LadybirdOptions options);
     ~Session();
 
     unsigned session_id() const { return m_id; }
 
     struct Window {
         String handle;
-        bool is_open;
+        NonnullRefPtr<WebContentConnection> web_content_connection;
     };
 
-    struct LocalElement {
-        i32 id;
+    WebContentConnection& web_content_connection() const
+    {
+        auto current_window = m_windows.get(m_current_window_handle);
+        VERIFY(current_window.has_value());
+
+        return current_window->web_content_connection;
+    }
+
+    String const& current_window_handle() const
+    {
+        return m_current_window_handle;
+    }
+
+    bool has_window_handle(StringView handle) const { return m_windows.contains(handle); }
+
+    ErrorOr<void> start(LaunchBrowserCallbacks const&);
+    Web::WebDriver::Response close_window();
+    Web::WebDriver::Response switch_to_window(StringView);
+    Web::WebDriver::Response get_window_handles() const;
+    ErrorOr<void, Web::WebDriver::Error> ensure_current_window_handle_is_valid() const;
+
+    Web::WebDriver::Response navigate_to(JsonValue) const;
+
+    enum class ScriptMode {
+        Sync,
+        Async,
     };
+    Web::WebDriver::Response execute_script(JsonValue, ScriptMode) const;
 
-    ErrorOr<Window*, WebDriverError> current_window();
-    ErrorOr<void, WebDriverError> check_for_open_top_level_browsing_context_or_return_error();
-    String const& current_window_handle() { return m_current_window_handle; }
+    Web::WebDriver::Response element_click(String) const;
+    Web::WebDriver::Response element_send_keys(String, JsonValue) const;
+    Web::WebDriver::Response perform_actions(JsonValue) const;
 
-    ErrorOr<void> start();
-    ErrorOr<void> stop();
-    JsonObject get_timeouts();
-    ErrorOr<JsonValue, WebDriverError> set_timeouts(JsonValue const& payload);
-    ErrorOr<JsonValue, WebDriverError> navigate_to(JsonValue const& url);
-    ErrorOr<JsonValue, WebDriverError> get_current_url();
-    ErrorOr<JsonValue, WebDriverError> back();
-    ErrorOr<JsonValue, WebDriverError> forward();
-    ErrorOr<JsonValue, WebDriverError> refresh();
-    ErrorOr<JsonValue, WebDriverError> get_title();
-    ErrorOr<JsonValue, WebDriverError> get_window_handle();
-    ErrorOr<void, Variant<WebDriverError, Error>> close_window();
-    ErrorOr<JsonValue, WebDriverError> get_window_handles() const;
-    ErrorOr<JsonValue, WebDriverError> find_element(JsonValue const& payload);
-    ErrorOr<JsonValue, WebDriverError> find_elements(JsonValue const& payload);
-    ErrorOr<JsonValue, WebDriverError> find_element_from_element(JsonValue const& payload, StringView parameter_element_id);
-    ErrorOr<JsonValue, WebDriverError> find_elements_from_element(JsonValue const& payload, StringView parameter_element_id);
-    ErrorOr<JsonValue, WebDriverError> get_element_attribute(JsonValue const& payload, StringView element_id, StringView name);
-    ErrorOr<JsonValue, WebDriverError> get_element_property(JsonValue const& payload, StringView element_id, StringView name);
-    ErrorOr<JsonValue, WebDriverError> get_element_css_value(JsonValue const& payload, StringView element_id, StringView property_name);
-    ErrorOr<JsonValue, WebDriverError> get_element_tag_name(JsonValue const& payload, StringView element_id);
-    ErrorOr<JsonValue, WebDriverError> get_all_cookies();
-    ErrorOr<JsonValue, WebDriverError> get_named_cookie(String const& name);
-    ErrorOr<JsonValue, WebDriverError> add_cookie(JsonValue const& payload);
-    ErrorOr<JsonValue, WebDriverError> delete_cookie(StringView const& name);
-    ErrorOr<JsonValue, WebDriverError> delete_all_cookies();
+    Web::WebDriver::Response dismiss_alert() const;
+    Web::WebDriver::Response accept_alert() const;
 
 private:
-    void delete_cookies(Optional<StringView> const& name = {});
-    ErrorOr<JsonArray, WebDriverError> find(LocalElement const& start_node, StringView const& location_strategy, StringView const& selector);
-
-    using ElementLocationStrategyHandler = ErrorOr<Vector<LocalElement>, WebDriverError> (Session::*)(LocalElement const&, StringView const&);
-    struct LocatorStrategy {
-        String name;
-        ElementLocationStrategyHandler handler;
-    };
-
-    static Vector<LocatorStrategy> s_locator_strategies;
-
-    ErrorOr<Vector<LocalElement>, WebDriverError> locator_strategy_css_selectors(LocalElement const&, StringView const&);
-    ErrorOr<Vector<LocalElement>, WebDriverError> locator_strategy_link_text(LocalElement const&, StringView const&);
-    ErrorOr<Vector<LocalElement>, WebDriverError> locator_strategy_partial_link_text(LocalElement const&, StringView const&);
-    ErrorOr<Vector<LocalElement>, WebDriverError> locator_strategy_tag_name(LocalElement const&, StringView const&);
-    ErrorOr<Vector<LocalElement>, WebDriverError> locator_strategy_x_path(LocalElement const&, StringView const&);
+    using ServerPromise = Core::Promise<ErrorOr<void>>;
+    ErrorOr<NonnullRefPtr<Core::LocalServer>> create_server(NonnullRefPtr<ServerPromise> promise);
 
     NonnullRefPtr<Client> m_client;
+    Web::WebDriver::LadybirdOptions m_options;
+
     bool m_started { false };
     unsigned m_id { 0 };
-    HashMap<String, NonnullOwnPtr<Window>> m_windows;
-    String m_current_window_handle;
-    RefPtr<Core::LocalServer> m_local_server;
-    RefPtr<BrowserConnection> m_browser_connection;
 
-    // https://w3c.github.io/webdriver/#dfn-session-script-timeout
-    TimeoutsConfiguration m_timeouts_configuration;
+    HashMap<String, Window> m_windows;
+    String m_current_window_handle;
+
+    Optional<ByteString> m_web_content_socket_path;
+    Optional<pid_t> m_browser_pid;
+
+    RefPtr<Core::LocalServer> m_web_content_server;
 };
 
 }

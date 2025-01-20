@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,20 +18,22 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(InstantPrototype);
+
 // 8.3 Properties of the Temporal.Instant Prototype Object, https://tc39.es/proposal-temporal/#sec-properties-of-the-temporal-instant-prototype-object
 InstantPrototype::InstantPrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().object_prototype())
+    : PrototypeObject(realm.intrinsics().object_prototype())
 {
 }
 
 void InstantPrototype::initialize(Realm& realm)
 {
-    Object::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 8.3.2 Temporal.Instant.prototype[ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, "Temporal.Instant"), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.Instant"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.epochSeconds, epoch_seconds_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.epochMilliseconds, epoch_milliseconds_getter, {}, Attribute::Configurable);
@@ -58,7 +60,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_seconds_getter)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Let ns be instant.[[Nanoseconds]].
     auto& ns = instant->nanoseconds();
@@ -67,7 +69,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_seconds_getter)
     auto [s, _] = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000'000'000 });
 
     // 5. Return 𝔽(s).
-    return Value((double)s.to_base(10).to_int<i64>().value());
+    return Value((double)s.to_base_deprecated(10).to_number<i64>().value());
 }
 
 // 8.3.4 get Temporal.Instant.prototype.epochMilliseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.instant.prototype.epochmilliseconds
@@ -75,7 +77,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_milliseconds_getter)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Let ns be instant.[[Nanoseconds]].
     auto& ns = instant->nanoseconds();
@@ -84,7 +86,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_milliseconds_getter)
     auto [ms, _] = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000'000 });
 
     // 5. Return 𝔽(ms).
-    return Value((double)ms.to_base(10).to_int<i64>().value());
+    return Value((double)ms.to_base_deprecated(10).to_number<i64>().value());
 }
 
 // 8.3.5 get Temporal.Instant.prototype.epochMicroseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.instant.prototype.epochmicroseconds
@@ -92,7 +94,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_microseconds_getter)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Let ns be instant.[[Nanoseconds]].
     auto& ns = instant->nanoseconds();
@@ -101,7 +103,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_microseconds_getter)
     auto [us, _] = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000 });
 
     // 5. Return ℤ(µs).
-    return js_bigint(vm, move(us));
+    return BigInt::create(vm, move(us));
 }
 
 // 8.3.6 get Temporal.Instant.prototype.epochNanoseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.instant.prototype.epochnanoseconds
@@ -109,7 +111,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::epoch_nanoseconds_getter)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Let ns be instant.[[Nanoseconds]].
     auto& ns = instant->nanoseconds();
@@ -125,10 +127,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::add)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? AddDurationToOrSubtractDurationFromInstant(add, instant, temporalDurationLike).
-    return TRY(add_duration_to_or_subtract_duration_from_instant(vm, ArithmeticOperation::Add, *instant, temporal_duration_like));
+    return TRY(add_duration_to_or_subtract_duration_from_instant(vm, ArithmeticOperation::Add, instant, temporal_duration_like));
 }
 
 // 8.3.8 Temporal.Instant.prototype.subtract ( temporalDurationLike ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.subtract
@@ -138,10 +140,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::subtract)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? AddDurationToOrSubtractDurationFromInstant(subtract, instant, temporalDurationLike).
-    return TRY(add_duration_to_or_subtract_duration_from_instant(vm, ArithmeticOperation::Subtract, *instant, temporal_duration_like));
+    return TRY(add_duration_to_or_subtract_duration_from_instant(vm, ArithmeticOperation::Subtract, instant, temporal_duration_like));
 }
 
 // 8.3.9 Temporal.Instant.prototype.until ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.until
@@ -152,10 +154,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::until)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? DifferenceTemporalInstant(until, instant, other, options).
-    return TRY(difference_temporal_instant(vm, DifferenceOperation::Until, *instant, other, options));
+    return TRY(difference_temporal_instant(vm, DifferenceOperation::Until, instant, other, options));
 }
 
 // 8.3.10 Temporal.Instant.prototype.since ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.since
@@ -166,10 +168,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::since)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? DifferenceTemporalInstant(since, instant, other, options).
-    return TRY(difference_temporal_instant(vm, DifferenceOperation::Since, *instant, other, options));
+    return TRY(difference_temporal_instant(vm, DifferenceOperation::Since, instant, other, options));
 }
 
 // 8.3.11 Temporal.Instant.prototype.round ( roundTo ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.round
@@ -179,7 +181,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::round)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. If roundTo is undefined, then
     if (vm.argument(0).is_undefined()) {
@@ -216,7 +218,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::round)
     auto& smallest_unit = *smallest_unit_value;
 
     // 7. Let roundingMode be ? ToTemporalRoundingMode(roundTo, "halfExpand").
-    auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *round_to, "halfExpand"));
+    auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *round_to, "halfExpand"sv));
 
     double maximum;
     // 8. If smallestUnit is "hour", then
@@ -252,13 +254,16 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::round)
         maximum = ns_per_day;
     }
 
-    // 14. Let roundingIncrement be ? ToTemporalRoundingIncrement(roundTo, maximum, true).
-    auto rounding_increment = TRY(to_temporal_rounding_increment(vm, *round_to, maximum, true));
+    // 14. Let roundingIncrement be ? ToTemporalRoundingIncrement(options).
+    auto rounding_increment = TRY(to_temporal_rounding_increment(vm, *round_to));
 
-    // 15. Let roundedNs be ! RoundTemporalInstant(instant.[[Nanoseconds]], roundingIncrement, smallestUnit, roundingMode).
+    // 15. Perform ? ValidateTemporalRoundingIncrement(roundingIncrement, maximum, true).
+    TRY(validate_temporal_rounding_increment(vm, rounding_increment, maximum, true));
+
+    // 16. Let roundedNs be ! RoundTemporalInstant(instant.[[Nanoseconds]], roundingIncrement, smallestUnit, roundingMode).
     auto* rounded_ns = round_temporal_instant(vm, instant->nanoseconds(), rounding_increment, smallest_unit, rounding_mode);
 
-    // 16. Return ! CreateTemporalInstant(roundedNs).
+    // 17. Return ! CreateTemporalInstant(roundedNs).
     return MUST(create_temporal_instant(vm, *rounded_ns));
 }
 
@@ -267,7 +272,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::equals)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Set other to ? ToTemporalInstant(other).
     auto other = TRY(to_temporal_instant(vm, vm.argument(0)));
@@ -285,7 +290,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_string)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Set options to ? GetOptionsObject(options).
     auto const* options = TRY(get_options_object(vm, vm.argument(0)));
@@ -299,8 +304,8 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_string)
         time_zone = TRY(to_temporal_time_zone(vm, time_zone));
     }
 
-    // 6. Let precision be ? ToSecondsStringPrecision(options).
-    auto precision = TRY(to_seconds_string_precision(vm, *options));
+    // 6. Let precision be ? ToSecondsStringPrecisionRecord(options).
+    auto precision = TRY(to_seconds_string_precision_record(vm, *options));
 
     // 7. Let roundingMode be ? ToTemporalRoundingMode(options, "trunc").
     auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *options, "trunc"sv));
@@ -312,7 +317,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_string)
     auto* rounded_instant = MUST(create_temporal_instant(vm, *rounded_ns));
 
     // 10. Return ? TemporalInstantToString(roundedInstant, timeZone, precision.[[Precision]]).
-    return js_string(vm, TRY(temporal_instant_to_string(vm, *rounded_instant, time_zone, precision.precision)));
+    return PrimitiveString::create(vm, TRY(temporal_instant_to_string(vm, *rounded_instant, time_zone, precision.precision)));
 }
 
 // 8.3.14 Temporal.Instant.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.tolocalestring
@@ -321,10 +326,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_locale_string)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? TemporalInstantToString(instant, undefined, "auto").
-    return js_string(vm, TRY(temporal_instant_to_string(vm, *instant, js_undefined(), "auto"sv)));
+    return PrimitiveString::create(vm, TRY(temporal_instant_to_string(vm, instant, js_undefined(), "auto"sv)));
 }
 
 // 8.3.15 Temporal.Instant.prototype.toJSON ( ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.tojson
@@ -332,10 +337,10 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_json)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Return ? TemporalInstantToString(instant, undefined, "auto").
-    return js_string(vm, TRY(temporal_instant_to_string(vm, *instant, js_undefined(), "auto"sv)));
+    return PrimitiveString::create(vm, TRY(temporal_instant_to_string(vm, instant, js_undefined(), "auto"sv)));
 }
 
 // 8.3.16 Temporal.Instant.prototype.valueOf ( ), https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.valueof
@@ -352,7 +357,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_zoned_date_time)
 
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. If Type(item) is not Object, then
     if (!item.is_object()) {
@@ -393,7 +398,7 @@ JS_DEFINE_NATIVE_FUNCTION(InstantPrototype::to_zoned_date_time_iso)
 {
     // 1. Let instant be the this value.
     // 2. Perform ? RequireInternalSlot(instant, [[InitializedTemporalInstant]]).
-    auto* instant = TRY(typed_this_object(vm));
+    auto instant = TRY(typed_this_object(vm));
 
     // 3. Set timeZone to ? ToTemporalTimeZone(timeZone).
     auto* time_zone = TRY(to_temporal_time_zone(vm, vm.argument(0)));

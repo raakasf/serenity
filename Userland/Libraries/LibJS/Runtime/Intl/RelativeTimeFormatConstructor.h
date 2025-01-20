@@ -12,13 +12,14 @@ namespace JS::Intl {
 
 class RelativeTimeFormatConstructor final : public NativeFunction {
     JS_OBJECT(RelativeTimeFormatConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(RelativeTimeFormatConstructor);
 
 public:
     virtual void initialize(Realm&) override;
     virtual ~RelativeTimeFormatConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
     explicit RelativeTimeFormatConstructor(Realm&);
@@ -28,6 +29,6 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(supported_locales_of);
 };
 
-ThrowCompletionOr<RelativeTimeFormat*> initialize_relative_time_format(VM& vm, RelativeTimeFormat& relative_time_format, Value locales_value, Value options_value);
+ThrowCompletionOr<NonnullGCPtr<RelativeTimeFormat>> initialize_relative_time_format(VM& vm, RelativeTimeFormat& relative_time_format, Value locales_value, Value options_value);
 
 }

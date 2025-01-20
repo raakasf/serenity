@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/NodeIteratorPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/NodeIterator.h>
@@ -11,8 +12,10 @@
 
 namespace Web::DOM {
 
+JS_DEFINE_ALLOCATOR(NodeIterator);
+
 NodeIterator::NodeIterator(Node& root)
-    : PlatformObject(Bindings::cached_web_prototype(root.realm(), "NodeIterator"))
+    : PlatformObject(root.realm())
     , m_root(root)
     , m_reference({ root })
 {
@@ -20,6 +23,12 @@ NodeIterator::NodeIterator(Node& root)
 }
 
 NodeIterator::~NodeIterator() = default;
+
+void NodeIterator::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(NodeIterator);
+}
 
 void NodeIterator::finalize()
 {
@@ -30,22 +39,22 @@ void NodeIterator::finalize()
 void NodeIterator::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_filter.ptr());
-    visitor.visit(m_root.ptr());
-    visitor.visit(m_reference.node.ptr());
+    visitor.visit(m_filter);
+    visitor.visit(m_root);
+    visitor.visit(m_reference.node);
 
     if (m_traversal_pointer.has_value())
-        visitor.visit(m_traversal_pointer->node.ptr());
+        visitor.visit(m_traversal_pointer->node);
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createnodeiterator
-JS::NonnullGCPtr<NodeIterator> NodeIterator::create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter> filter)
+WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeIterator>> NodeIterator::create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter> filter)
 {
     // 1. Let iterator be a new NodeIterator object.
     // 2. Set iterator’s root and iterator’s reference to root.
     // 3. Set iterator’s pointer before reference to true.
     auto& realm = root.realm();
-    auto* iterator = realm.heap().allocate<NodeIterator>(realm, root);
+    auto iterator = realm.heap().allocate<NodeIterator>(realm, root);
 
     // 4. Set iterator’s whatToShow to whatToShow.
     iterator->m_what_to_show = what_to_show;
@@ -54,7 +63,7 @@ JS::NonnullGCPtr<NodeIterator> NodeIterator::create(Node& root, unsigned what_to
     iterator->m_filter = filter;
 
     // 6. Return iterator.
-    return *iterator;
+    return iterator;
 }
 
 // https://dom.spec.whatwg.org/#dom-nodeiterator-detach
@@ -84,7 +93,7 @@ JS::ThrowCompletionOr<JS::GCPtr<Node>> NodeIterator::traverse(Direction directio
                 auto* next_node = m_traversal_pointer->node->next_in_pre_order(m_root.ptr());
                 if (!next_node)
                     return nullptr;
-                m_traversal_pointer->node = next_node;
+                m_traversal_pointer->node = *next_node;
             } else {
                 // If beforeNode is true, then set it to false.
                 m_traversal_pointer->is_before_node = false;
@@ -99,7 +108,7 @@ JS::ThrowCompletionOr<JS::GCPtr<Node>> NodeIterator::traverse(Direction directio
                 auto* previous_node = m_traversal_pointer->node->previous_in_pre_order();
                 if (!previous_node)
                     return nullptr;
-                m_traversal_pointer->node = previous_node;
+                m_traversal_pointer->node = *previous_node;
             } else {
                 // If beforeNode is false, then set it to true.
                 m_traversal_pointer->is_before_node = true;
@@ -116,7 +125,7 @@ JS::ThrowCompletionOr<JS::GCPtr<Node>> NodeIterator::traverse(Direction directio
         auto result = TRY(filter(*m_traversal_pointer->node));
 
         // 3. If result is FILTER_ACCEPT, then break.
-        if (result == NodeFilter::FILTER_ACCEPT)
+        if (result == NodeFilter::Result::FILTER_ACCEPT)
             break;
     }
 
@@ -133,25 +142,25 @@ JS::ThrowCompletionOr<NodeFilter::Result> NodeIterator::filter(Node& node)
 {
     // 1. If traverser’s active flag is set, then throw an "InvalidStateError" DOMException.
     if (m_active)
-        return throw_completion(WebIDL::InvalidStateError::create(realm(), "NodeIterator is already active"));
+        return throw_completion(WebIDL::InvalidStateError::create(realm(), "NodeIterator is already active"_string));
 
     // 2. Let n be node’s nodeType attribute value − 1.
     auto n = node.node_type() - 1;
 
     // 3. If the nth bit (where 0 is the least significant bit) of traverser’s whatToShow is not set, then return FILTER_SKIP.
     if (!(m_what_to_show & (1u << n)))
-        return NodeFilter::FILTER_SKIP;
+        return NodeFilter::Result::FILTER_SKIP;
 
     // 4. If traverser’s filter is null, then return FILTER_ACCEPT.
     if (!m_filter)
-        return NodeFilter::FILTER_ACCEPT;
+        return NodeFilter::Result::FILTER_ACCEPT;
 
     // 5. Set traverser’s active flag.
     m_active = true;
 
     // 6. Let result be the return value of call a user object’s operation with traverser’s filter, "acceptNode", and « node ».
     //    If this throws an exception, then unset traverser’s active flag and rethrow the exception.
-    auto result = WebIDL::call_user_object_operation(m_filter->callback(), "acceptNode", {}, &node);
+    auto result = WebIDL::call_user_object_operation(m_filter->callback(), "acceptNode"_string, {}, &node);
     if (result.is_abrupt()) {
         m_active = false;
         return result;
@@ -194,7 +203,7 @@ void NodeIterator::run_pre_removing_steps_with_node_pointer(Node& to_be_removed_
             while (node && node->is_descendant_of(to_be_removed_node))
                 node = node->next_in_pre_order(root());
             if (node)
-                pointer.node = node;
+                pointer.node = *node;
             return;
         }
         if (auto* node = to_be_removed_node.previous_in_pre_order()) {
@@ -218,7 +227,7 @@ void NodeIterator::run_pre_removing_steps_with_node_pointer(Node& to_be_removed_
                 node = node->previous_in_pre_order();
         }
         if (node)
-            pointer.node = node;
+            pointer.node = *node;
         return;
     }
     auto* node = to_be_removed_node.next_in_pre_order(root());
@@ -227,7 +236,7 @@ void NodeIterator::run_pre_removing_steps_with_node_pointer(Node& to_be_removed_
             node = node->previous_in_pre_order();
     }
     if (node)
-        pointer.node = node;
+        pointer.node = *node;
 }
 
 // https://dom.spec.whatwg.org/#nodeiterator-pre-removing-steps

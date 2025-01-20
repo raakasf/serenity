@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, David Tuin <davidot@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -10,7 +10,7 @@
 
 #include <AK/Assertions.h>
 #include <AK/BitCast.h>
-#include <AK/Concepts.h>
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/Function.h>
@@ -19,16 +19,14 @@
 #include <AK/Types.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/GCPtr.h>
-#include <LibJS/Runtime/BigInt.h>
-#include <LibJS/Runtime/Utf16String.h>
 #include <math.h>
+
+namespace JS {
 
 // 2 ** 53 - 1
 static constexpr double MAX_ARRAY_LIKE_INDEX = 9007199254740991.0;
 // Unique bit representation of negative zero (only sign bit set)
 static constexpr u64 NEGATIVE_ZERO_BITS = ((u64)1 << 63);
-
-namespace JS {
 
 static_assert(sizeof(double) == 8);
 static_assert(sizeof(void*) == sizeof(double) || sizeof(void*) == sizeof(u32));
@@ -106,6 +104,7 @@ static_assert((EMPTY_TAG & IS_NULLISH_EXTRACT_PATTERN) != IS_NULLISH_PATTERN);
 
 static constexpr u64 TAG_EXTRACTION = 0xFFFF000000000000;
 static constexpr u64 TAG_SHIFT = 48;
+static constexpr u64 SHIFTED_BOOLEAN_TAG = BOOLEAN_TAG << TAG_SHIFT;
 static constexpr u64 SHIFTED_INT32_TAG = INT32_TAG << TAG_SHIFT;
 static constexpr u64 SHIFTED_IS_CELL_PATTERN = IS_CELL_PATTERN << TAG_SHIFT;
 
@@ -132,6 +131,8 @@ public:
         Number,
     };
 
+    [[nodiscard]] u16 tag() const { return m_value.tag; }
+
     bool is_empty() const { return m_value.tag == EMPTY_TAG; }
     bool is_undefined() const { return m_value.tag == UNDEFINED_TAG; }
     bool is_null() const { return m_value.tag == NULL_TAG; }
@@ -140,13 +141,14 @@ public:
     bool is_object() const { return m_value.tag == OBJECT_TAG; }
     bool is_boolean() const { return m_value.tag == BOOLEAN_TAG; }
     bool is_symbol() const { return m_value.tag == SYMBOL_TAG; }
-    bool is_accessor() const { return m_value.tag == ACCESSOR_TAG; };
-    bool is_bigint() const { return m_value.tag == BIGINT_TAG; };
+    bool is_accessor() const { return m_value.tag == ACCESSOR_TAG; }
+    bool is_bigint() const { return m_value.tag == BIGINT_TAG; }
     bool is_nullish() const { return (m_value.tag & IS_NULLISH_EXTRACT_PATTERN) == IS_NULLISH_PATTERN; }
     bool is_cell() const { return (m_value.tag & IS_CELL_PATTERN) == IS_CELL_PATTERN; }
     ThrowCompletionOr<bool> is_array(VM&) const;
     bool is_function() const;
     bool is_constructor() const;
+    bool is_error() const;
     ThrowCompletionOr<bool> is_regexp(VM&) const;
 
     bool is_nan() const
@@ -288,11 +290,17 @@ public:
     {
     }
 
+    template<typename T>
+    Value(Handle<T> const& ptr)
+        : Value(ptr.ptr())
+    {
+    }
+
     double as_double() const
     {
         VERIFY(is_number());
         if (is_int32())
-            return static_cast<i32>(m_value.encoded);
+            return as_i32();
         return m_value.as_double;
     }
 
@@ -344,6 +352,12 @@ public:
         return *extract_pointer<Cell>();
     }
 
+    Cell& as_cell() const
+    {
+        VERIFY(is_cell());
+        return *extract_pointer<Cell>();
+    }
+
     Accessor& as_accessor()
     {
         VERIFY(is_accessor());
@@ -369,13 +383,15 @@ public:
     u64 encoded() const { return m_value.encoded; }
 
     ThrowCompletionOr<String> to_string(VM&) const;
+    ThrowCompletionOr<ByteString> to_byte_string(VM&) const;
     ThrowCompletionOr<Utf16String> to_utf16_string(VM&) const;
-    ThrowCompletionOr<PrimitiveString*> to_primitive_string(VM&);
+    ThrowCompletionOr<String> to_well_formed_string(VM&) const;
+    ThrowCompletionOr<NonnullGCPtr<PrimitiveString>> to_primitive_string(VM&);
     ThrowCompletionOr<Value> to_primitive(VM&, PreferredType preferred_type = PreferredType::Default) const;
-    ThrowCompletionOr<Object*> to_object(VM&) const;
+    ThrowCompletionOr<NonnullGCPtr<Object>> to_object(VM&) const;
     ThrowCompletionOr<Value> to_numeric(VM&) const;
     ThrowCompletionOr<Value> to_number(VM&) const;
-    ThrowCompletionOr<BigInt*> to_bigint(VM&) const;
+    ThrowCompletionOr<NonnullGCPtr<BigInt>> to_bigint(VM&) const;
     ThrowCompletionOr<i64> to_bigint_int64(VM&) const;
     ThrowCompletionOr<u64> to_bigint_uint64(VM&) const;
     ThrowCompletionOr<double> to_double(VM&) const;
@@ -393,9 +409,9 @@ public:
     bool to_boolean() const;
 
     ThrowCompletionOr<Value> get(VM&, PropertyKey const&) const;
-    ThrowCompletionOr<FunctionObject*> get_method(VM&, PropertyKey const&) const;
+    ThrowCompletionOr<GCPtr<FunctionObject>> get_method(VM&, PropertyKey const&) const;
 
-    String to_string_without_side_effects() const;
+    [[nodiscard]] String to_string_without_side_effects() const;
 
     Value value_or(Value fallback) const
     {
@@ -404,7 +420,7 @@ public:
         return *this;
     }
 
-    String typeof() const;
+    [[nodiscard]] NonnullGCPtr<PrimitiveString> typeof_(VM&) const;
 
     bool operator==(Value const&) const;
 
@@ -417,8 +433,8 @@ public:
         // For 32-bit system the pointer fully fits so we can just return it directly.
         static_assert(sizeof(void*) == sizeof(u32));
         return static_cast<FlatPtr>(encoded & 0xffff'ffff);
-#elif ARCH(X86_64)
-        // For x86_64 the top 16 bits should be sign extending the "real" top bit (47th).
+#elif ARCH(X86_64) || ARCH(RISCV64)
+        // For x86_64 and riscv64 the top 16 bits should be sign extending the "real" top bit (47th).
         // So first shift the top 16 bits away then using the right shift it sign extends the top 16 bits.
         return static_cast<FlatPtr>((static_cast<i64>(encoded << 16)) >> 16);
 #elif ARCH(AARCH64)
@@ -429,7 +445,24 @@ public:
 #endif
     }
 
+    // A double is any Value which does not have the full exponent and top mantissa bit set or has
+    // exactly only those bits set.
+    bool is_double() const { return (m_value.encoded & CANON_NAN_BITS) != CANON_NAN_BITS || (m_value.encoded == CANON_NAN_BITS); }
+    bool is_int32() const { return m_value.tag == INT32_TAG; }
+
+    i32 as_i32() const
+    {
+        VERIFY(is_int32());
+        return static_cast<i32>(m_value.encoded & 0xFFFFFFFF);
+    }
+
+    bool to_boolean_slow_case() const;
+
 private:
+    ThrowCompletionOr<Value> to_number_slow_case(VM&) const;
+    ThrowCompletionOr<Value> to_numeric_slow_case(VM&) const;
+    ThrowCompletionOr<Value> to_primitive_slow_case(VM&, PreferredType) const;
+
     Value(u64 tag, u64 val)
     {
         VERIFY(!(tag & val));
@@ -460,17 +493,6 @@ private:
         }
     }
 
-    // A double is any Value which does not have the full exponent and top mantissa bit set or has
-    // exactly only those bits set.
-    bool is_double() const { return (m_value.encoded & CANON_NAN_BITS) != CANON_NAN_BITS || (m_value.encoded == CANON_NAN_BITS); }
-    bool is_int32() const { return m_value.tag == INT32_TAG; }
-
-    i32 as_i32() const
-    {
-        VERIFY(is_int32());
-        return static_cast<i32>(m_value.encoded & 0xFFFFFFFF);
-    }
-
     template<typename PointerType>
     PointerType* extract_pointer() const
     {
@@ -498,7 +520,7 @@ private:
     friend ThrowCompletionOr<Value> less_than(VM&, Value lhs, Value rhs);
     friend ThrowCompletionOr<Value> less_than_equals(VM&, Value lhs, Value rhs);
     friend ThrowCompletionOr<Value> add(VM&, Value lhs, Value rhs);
-    friend bool same_value_non_numeric(Value lhs, Value rhs);
+    friend bool same_value_non_number(Value lhs, Value rhs);
 };
 
 inline Value js_undefined()
@@ -524,12 +546,6 @@ inline Value js_infinity()
 inline Value js_negative_infinity()
 {
     return Value(-INFINITY);
-}
-
-inline void Cell::Visitor::visit(Value value)
-{
-    if (value.is_cell())
-        visit_impl(value.as_cell());
 }
 
 ThrowCompletionOr<Value> greater_than(VM&, Value lhs, Value rhs);
@@ -559,12 +575,18 @@ ThrowCompletionOr<bool> is_loosely_equal(VM&, Value lhs, Value rhs);
 bool is_strictly_equal(Value lhs, Value rhs);
 bool same_value(Value lhs, Value rhs);
 bool same_value_zero(Value lhs, Value rhs);
-bool same_value_non_numeric(Value lhs, Value rhs);
+bool same_value_non_number(Value lhs, Value rhs);
 ThrowCompletionOr<TriState> is_less_than(VM&, Value lhs, Value rhs, bool left_first);
 
 double to_integer_or_infinity(double);
 
-Optional<Value> string_to_number(StringView);
+enum class NumberToStringMode {
+    WithExponent,
+    WithoutExponent,
+};
+[[nodiscard]] String number_to_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
+[[nodiscard]] ByteString number_to_byte_string(double, NumberToStringMode = NumberToStringMode::WithExponent);
+double string_to_number(StringView);
 
 inline bool Value::operator==(Value const& value) const { return same_value(*this, value); }
 
@@ -584,6 +606,9 @@ public:
 
     Optional() = default;
 
+    template<SameAs<OptionalNone> V>
+    Optional(V) { }
+
     Optional(Optional<JS::Value> const& other)
     {
         if (other.has_value())
@@ -596,9 +621,18 @@ public:
     }
 
     template<typename U = JS::Value>
-    explicit(!IsConvertible<U&&, JS::Value>) Optional(U&& value) requires(!IsSame<RemoveCVReference<U>, Optional<JS::Value>> && IsConstructible<JS::Value, U&&>)
+    requires(!IsSame<OptionalNone, RemoveCVReference<U>>)
+    explicit(!IsConvertible<U&&, JS::Value>) Optional(U&& value)
+    requires(!IsSame<RemoveCVReference<U>, Optional<JS::Value>> && IsConstructible<JS::Value, U &&>)
         : m_value(forward<U>(value))
     {
+    }
+
+    template<SameAs<OptionalNone> V>
+    Optional& operator=(V)
+    {
+        clear();
+        return *this;
     }
 
     Optional& operator=(Optional const& other)
@@ -617,6 +651,18 @@ public:
             m_value = other.m_value;
         }
         return *this;
+    }
+
+    template<typename O>
+    ALWAYS_INLINE bool operator==(Optional<O> const& other) const
+    {
+        return has_value() == other.has_value() && (!has_value() || value() == other.value());
+    }
+
+    template<typename O>
+    ALWAYS_INLINE bool operator==(O const& other) const
+    {
+        return has_value() && value() == other;
     }
 
     void clear()
@@ -682,8 +728,16 @@ template<>
 struct Formatter<JS::Value> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, JS::Value value)
     {
-        return Formatter<StringView>::format(builder, value.is_empty() ? "<empty>" : value.to_string_without_side_effects());
+        if (value.is_empty())
+            return Formatter<StringView>::format(builder, "<empty>"sv);
+        return Formatter<StringView>::format(builder, value.to_string_without_side_effects());
     }
+};
+
+template<>
+struct Traits<JS::Value> : DefaultTraits<JS::Value> {
+    static unsigned hash(JS::Value value) { return Traits<u64>::hash(value.encoded()); }
+    static constexpr bool is_trivial() { return true; }
 };
 
 }

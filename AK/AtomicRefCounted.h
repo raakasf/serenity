@@ -11,7 +11,6 @@
 #include <AK/Checked.h>
 #include <AK/Noncopyable.h>
 #include <AK/Platform.h>
-#include <AK/StdLibExtras.h>
 
 namespace AK {
 
@@ -83,5 +82,7 @@ public:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::AtomicRefCounted;
 using AK::AtomicRefCountedBase;
+#endif

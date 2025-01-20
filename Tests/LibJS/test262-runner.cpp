@@ -5,35 +5,37 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteString.h>
 #include <AK/Format.h>
 #include <AK/JsonObject.h>
 #include <AK/Result.h>
 #include <AK/ScopeGuard.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
+#include <LibCore/File.h>
 #include <LibJS/Bytecode/BasicBlock.h>
 #include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Bytecode/PassManager.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
-#include <LibJS/Interpreter.h>
+#include <LibJS/Parser.h>
+#include <LibJS/Runtime/Agent.h>
 #include <LibJS/Runtime/VM.h>
+#include <LibJS/Runtime/ValueInlines.h>
 #include <LibJS/Script.h>
+#include <LibJS/SourceTextModule.h>
+#include <assert.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
-#ifndef AK_OS_MACOS
+#if !defined(AK_OS_MACOS) && !defined(AK_OS_EMSCRIPTEN) && !defined(AK_OS_GNU_HURD)
 // Only used to disable core dumps
 #    include <sys/prctl.h>
 #endif
 
-static String s_current_test = "";
-static bool s_use_bytecode = false;
+static ByteString s_current_test = "";
 static bool s_parse_only = false;
-static String s_harness_file_directory;
+static ByteString s_harness_file_directory;
 static bool s_automatic_harness_detection_mode = false;
 
 enum class NegativePhase {
@@ -45,9 +47,9 @@ enum class NegativePhase {
 
 struct TestError {
     NegativePhase phase { NegativePhase::ParseOrEarly };
-    String type;
-    String details;
-    String harness_file;
+    ByteString type;
+    ByteString details;
+    ByteString harness_file;
 };
 
 using ScriptOrModuleProgram = Variant<JS::NonnullGCPtr<JS::Script>, JS::NonnullGCPtr<JS::SourceTextModule>>;
@@ -60,7 +62,7 @@ static Result<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, 
         return TestError {
             NegativePhase::ParseOrEarly,
             "SyntaxError",
-            script_or_error.error()[0].to_string(),
+            script_or_error.error()[0].to_byte_string(),
             ""
         };
     }
@@ -77,28 +79,10 @@ static Result<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, 
 template<typename InterpreterT>
 static Result<void, TestError> run_program(InterpreterT& interpreter, ScriptOrModuleProgram& program)
 {
-    auto result = JS::ThrowCompletionOr<JS::Value> { JS::js_undefined() };
-    if constexpr (IsSame<InterpreterT, JS::Interpreter>) {
-        result = program.visit(
-            [&](auto& visitor) {
-                return interpreter.run(*visitor);
-            });
-    } else {
-        auto program_node = program.visit(
-            [](auto& visitor) -> NonnullRefPtr<JS::Program> {
-                return visitor->parse_node();
-            });
-
-        auto unit_result = JS::Bytecode::Generator::generate(program_node);
-        if (unit_result.is_error()) {
-            result = JS::throw_completion(JS::InternalError::create(interpreter.realm(), String::formatted("TODO({})", unit_result.error().to_string())));
-        } else {
-            auto unit = unit_result.release_value();
-            auto& passes = JS::Bytecode::Interpreter::optimization_pipeline();
-            passes.perform(*unit);
-            result = interpreter.run(*unit);
-        }
-    }
+    auto result = program.visit(
+        [&](auto& visitor) {
+            return interpreter.run(*visitor);
+        });
 
     if (result.is_error()) {
         auto error_value = *result.throw_completion().value();
@@ -109,55 +93,55 @@ static Result<void, TestError> run_program(InterpreterT& interpreter, ScriptOrMo
 
             auto name = object.get_without_side_effects("name");
             if (!name.is_empty() && !name.is_accessor()) {
-                error.type = name.to_string_without_side_effects();
+                error.type = name.to_string_without_side_effects().to_byte_string();
             } else {
                 auto constructor = object.get_without_side_effects("constructor");
                 if (constructor.is_object()) {
                     name = constructor.as_object().get_without_side_effects("name");
                     if (!name.is_undefined())
-                        error.type = name.to_string_without_side_effects();
+                        error.type = name.to_string_without_side_effects().to_byte_string();
                 }
             }
 
             auto message = object.get_without_side_effects("message");
             if (!message.is_empty() && !message.is_accessor())
-                error.details = message.to_string_without_side_effects();
+                error.details = message.to_string_without_side_effects().to_byte_string();
         }
         if (error.type.is_empty())
-            error.type = error_value.to_string_without_side_effects();
+            error.type = error_value.to_string_without_side_effects().to_byte_string();
         return error;
     }
     return {};
 }
 
-static HashMap<String, String> s_cached_harness_files;
+static HashMap<ByteString, ByteString> s_cached_harness_files;
 
 static Result<StringView, TestError> read_harness_file(StringView harness_file)
 {
     auto cache = s_cached_harness_files.find(harness_file);
     if (cache == s_cached_harness_files.end()) {
-        auto file_or_error = Core::Stream::File::open(String::formatted("{}{}", s_harness_file_directory, harness_file), Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open(ByteString::formatted("{}{}", s_harness_file_directory, harness_file), Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             return TestError {
                 NegativePhase::Harness,
                 "filesystem",
-                String::formatted("Could not open file: {}", harness_file),
+                ByteString::formatted("Could not open file: {}", harness_file),
                 harness_file
             };
         }
 
-        auto contents_or_error = file_or_error.value()->read_all();
+        auto contents_or_error = file_or_error.value()->read_until_eof();
         if (contents_or_error.is_error()) {
             return TestError {
                 NegativePhase::Harness,
                 "filesystem",
-                String::formatted("Could not read file: {}", harness_file),
+                ByteString::formatted("Could not read file: {}", harness_file),
                 harness_file
             };
         }
 
         StringView contents_view = contents_or_error.value();
-        s_cached_harness_files.set(harness_file, contents_view.to_string());
+        s_cached_harness_files.set(harness_file, contents_view.to_byte_string());
         cache = s_cached_harness_files.find(harness_file);
         VERIFY(cache != s_cached_harness_files.end());
     }
@@ -187,12 +171,19 @@ enum class StrictMode {
     OnlyStrict
 };
 
+enum class SkipTest {
+    No,
+    Yes,
+};
+
 static constexpr auto sta_harness_file = "sta.js"sv;
 static constexpr auto assert_harness_file = "assert.js"sv;
 static constexpr auto async_include = "doneprintHandle.js"sv;
 
 struct TestMetadata {
     Vector<StringView> harness_files { sta_harness_file, assert_harness_file };
+
+    SkipTest skip_test { SkipTest::No };
 
     StrictMode strict_mode { StrictMode::Both };
     JS::Program::Type program_type { JS::Program::Type::Script };
@@ -216,38 +207,37 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
             return TestError {
                 NegativePhase::ParseOrEarly,
                 "SyntaxError",
-                parser.errors()[0].to_string(),
+                parser.errors()[0].to_byte_string(),
                 ""
             };
         }
         return {};
     }
 
-    auto vm = JS::VM::create();
-    vm->enable_default_host_import_module_dynamically_hook();
-    auto ast_interpreter = JS::Interpreter::create<JS::Test262::GlobalObject>(*vm);
-    auto& realm = ast_interpreter->realm();
+    auto vm = MUST(JS::VM::create());
+    vm->set_dynamic_imports_allowed(true);
 
-    auto program_or_error = parse_program(realm, source, filepath, metadata.program_type);
+    JS::GCPtr<JS::Realm> realm;
+    JS::GCPtr<JS::Test262::GlobalObject> global_object;
+    auto root_execution_context = MUST(JS::Realm::initialize_host_defined_realm(
+        *vm,
+        [&](JS::Realm& realm_) -> JS::GlobalObject* {
+            realm = &realm_;
+            global_object = vm->heap().allocate_without_realm<JS::Test262::GlobalObject>(realm_);
+            return global_object;
+        },
+        nullptr));
+
+    auto program_or_error = parse_program(*realm, source, filepath, metadata.program_type);
     if (program_or_error.is_error())
         return program_or_error.release_error();
 
-    OwnPtr<JS::Bytecode::Interpreter> bytecode_interpreter = nullptr;
-    if (s_use_bytecode)
-        bytecode_interpreter = make<JS::Bytecode::Interpreter>(realm);
-
-    auto run_with_interpreter = [&](ScriptOrModuleProgram& program) {
-        if (s_use_bytecode)
-            return run_program(*bytecode_interpreter, program);
-        return run_program(*ast_interpreter, program);
-    };
-
     for (auto& harness_file : metadata.harness_files) {
-        auto harness_program_or_error = parse_harness_files(realm, harness_file);
+        auto harness_program_or_error = parse_harness_files(*realm, harness_file);
         if (harness_program_or_error.is_error())
             return harness_program_or_error.release_error();
         ScriptOrModuleProgram harness_program { harness_program_or_error.release_value() };
-        auto result = run_with_interpreter(harness_program);
+        auto result = run_program(vm->bytecode_interpreter(), harness_program);
         if (result.is_error()) {
             return TestError {
                 NegativePhase::Harness,
@@ -258,17 +248,17 @@ static Result<void, TestError> run_test(StringView source, StringView filepath, 
         }
     }
 
-    return run_with_interpreter(program_or_error.value());
+    return run_program(vm->bytecode_interpreter(), program_or_error.value());
 }
 
-static Result<TestMetadata, String> extract_metadata(StringView source)
+static Result<TestMetadata, ByteString> extract_metadata(StringView source)
 {
     auto lines = source.lines();
 
     TestMetadata metadata;
 
     bool parsing_negative = false;
-    String failed_message;
+    ByteString failed_message;
 
     auto parse_list = [&](StringView line) {
         auto start = line.find('[');
@@ -279,7 +269,7 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
 
         auto end = line.find_last(']');
         if (!end.has_value() || end.value() <= start.value()) {
-            failed_message = String::formatted("Can't parse list in '{}'", line);
+            failed_message = ByteString::formatted("Can't parse list in '{}'", line);
             return items;
         }
 
@@ -292,7 +282,7 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
     auto second_word = [&](StringView line) {
         auto separator = line.find(' ');
         if (!separator.has_value() || separator.value() >= (line.length() - 1u)) {
-            failed_message = String::formatted("Can't parse value after space in '{}'", line);
+            failed_message = ByteString::formatted("Can't parse value after space in '{}'", line);
             return ""sv;
         }
         return line.substring_view(separator.value() + 1);
@@ -346,7 +336,7 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
                     metadata.phase = NegativePhase::Runtime;
                 } else {
                     has_phase = false;
-                    failed_message = String::formatted("Unknown negative phase: {}", phase);
+                    failed_message = ByteString::formatted("Unknown negative phase: {}", phase);
                     break;
                 }
             } else if (line.starts_with("type:"sv)) {
@@ -356,7 +346,7 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
                     failed_message = "Failed to find phase in negative attributes";
                     break;
                 }
-                if (metadata.type.is_null()) {
+                if (metadata.type.is_empty()) {
                     failed_message = "Failed to find type in negative attributes";
                     break;
                 }
@@ -367,11 +357,6 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
 
         if (line.starts_with("flags:"sv)) {
             auto flags = parse_list(line);
-
-            if (flags.is_empty()) {
-                failed_message = String::formatted("Failed to find flags in '{}'", line);
-                break;
-            }
 
             for (auto flag : flags) {
                 if (flag == "raw"sv) {
@@ -388,6 +373,9 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
                 } else if (flag == "async"sv) {
                     metadata.harness_files.append(async_include);
                     metadata.is_async = true;
+                } else if (flag == "CanBlockIsFalse"sv) {
+                    if (JS::agent_can_suspend())
+                        metadata.skip_test = SkipTest::Yes;
                 }
             }
         } else if (line.starts_with("includes:"sv)) {
@@ -405,7 +393,7 @@ static Result<TestMetadata, String> extract_metadata(StringView source)
     }
 
     if (failed_message.is_empty())
-        failed_message = String::formatted("Never reached end of comment '---*/'");
+        failed_message = ByteString::formatted("Never reached end of comment '---*/'");
 
     return failed_message;
 }
@@ -429,9 +417,9 @@ static bool verify_test(Result<void, TestError>& result, TestMetadata const& met
     }
 
     if (metadata.is_async && output.has("output"sv)) {
-        auto& output_messages = output.get("output"sv);
-        VERIFY(output_messages.is_string());
-        if (output_messages.as_string().contains("AsyncTestFailure:InternalError: TODO("sv)) {
+        auto output_messages = output.get_byte_string("output"sv);
+        VERIFY(output_messages.has_value());
+        if (output_messages->contains("AsyncTestFailure:InternalError: TODO("sv)) {
             output.set("todo_error", true);
             output.set("result", "todo_error");
         }
@@ -480,7 +468,7 @@ static bool verify_test(Result<void, TestError>& result, TestMetadata const& met
 
     JsonObject expected_error_object;
     expected_error_object.set("phase", phase_to_string(metadata.phase));
-    expected_error_object.set("type", metadata.type.to_string());
+    expected_error_object.set("type", metadata.type.to_byte_string());
 
     expected_error = expected_error_object;
 
@@ -519,7 +507,7 @@ static bool verify_test(Result<void, TestError>& result, TestMetadata const& met
     return error.phase == metadata.phase && error.type == metadata.type;
 }
 
-static bool extract_harness_directory(String const& test_file_path)
+static bool extract_harness_directory(ByteString const& test_file_path)
 {
     auto test_directory_index = test_file_path.find("test/"sv);
     if (!test_directory_index.has_value()) {
@@ -527,7 +515,7 @@ static bool extract_harness_directory(String const& test_file_path)
         return false;
     }
 
-    s_harness_file_directory = String::formatted("{}harness/", test_file_path.substring_view(0, test_directory_index.value()));
+    s_harness_file_directory = ByteString::formatted("{}harness/", test_file_path.substring_view(0, test_directory_index.value()));
     return true;
 }
 
@@ -545,7 +533,7 @@ static bool g_in_assert = false;
         assert_fail_result.set("assert_fail", true);
         assert_fail_result.set("result", "assert_fail");
         assert_fail_result.set("output", assert_failed_message);
-        outln(saved_stdout_fd, "RESULT {}{}", assert_fail_result.to_string(), '\0');
+        outln(saved_stdout_fd, "RESULT {}{}", assert_fail_result.to_byte_string(), '\0');
         // (Attempt to) Ensure that messages are written before quitting.
         fflush(saved_stdout_fd);
         fflush(stderr);
@@ -553,15 +541,22 @@ static bool g_in_assert = false;
     exit(12);
 }
 
+// FIXME: Use a SIGABRT handler here instead of overriding internal libc assertion handlers.
+//        Fixing this will likely require updating the test driver as well to pull the assertion failure
+//        message out of stderr rather than from the json object printed to stdout.
 #ifdef AK_OS_SERENITY
 void __assertion_failed(char const* assertion)
 {
     handle_failed_assert(assertion);
 }
 #else
+#    ifdef ASSERT_FAIL_HAS_INT /* Set by CMake */
+extern "C" __attribute__((__noreturn__)) void __assert_fail(char const* assertion, char const* file, int line, char const* function)
+#    else
 extern "C" __attribute__((__noreturn__)) void __assert_fail(char const* assertion, char const* file, unsigned int line, char const* function)
+#    endif
 {
-    auto full_message = String::formatted("{}:{}: {}: Assertion `{}' failed.", file, line, function, assertion);
+    auto full_message = ByteString::formatted("{}:{}: {}: Assertion `{}' failed.", file, line, function, assertion);
     handle_failed_assert(full_message.characters());
 }
 #endif
@@ -573,6 +568,11 @@ constexpr int exit_read_file_failure = 3;
 
 int main(int argc, char** argv)
 {
+    Vector<StringView> arguments;
+    arguments.ensure_capacity(argc);
+    for (auto i = 0; i < argc; ++i)
+        arguments.append({ argv[i], strlen(argv[i]) });
+
     int timeout = 10;
     bool enable_debug_printing = false;
     bool disable_core_dumping = false;
@@ -580,15 +580,17 @@ int main(int argc, char** argv)
     Core::ArgsParser args_parser;
     args_parser.set_general_help("LibJS test262 runner for streaming tests");
     args_parser.add_option(s_harness_file_directory, "Directory containing the harness files", "harness-location", 'l', "harness-files");
-    args_parser.add_option(s_use_bytecode, "Use the bytecode interpreter", "use-bytecode", 'b');
     args_parser.add_option(s_parse_only, "Only parse the files", "parse-only", 'p');
     args_parser.add_option(timeout, "Seconds before test should timeout", "timeout", 't', "seconds");
     args_parser.add_option(enable_debug_printing, "Enable debug printing", "debug", 'd');
-    args_parser.add_option(disable_core_dumping, "Disable core dumping", "disable-core-dump", 0);
-    args_parser.parse(argc, argv);
+    args_parser.add_option(disable_core_dumping, "Disable core dumping", "disable-core-dump");
+    args_parser.parse(arguments);
 
-#ifndef AK_OS_MACOS
-    if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0) < 0) {
+#ifdef AK_OS_GNU_HURD
+    if (disable_core_dumping)
+        setenv("CRASHSERVER", "/servers/crash-kill", true);
+#elif !defined(AK_OS_MACOS) && !defined(AK_OS_EMSCRIPTEN)
+    if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0, 0) < 0) {
         perror("prctl(PR_SET_DUMPABLE)");
         return exit_wrong_arguments;
     }
@@ -597,7 +599,7 @@ int main(int argc, char** argv)
     if (s_harness_file_directory.is_empty()) {
         s_automatic_harness_detection_mode = true;
     } else if (!s_harness_file_directory.ends_with('/')) {
-        s_harness_file_directory = String::formatted("{}/", s_harness_file_directory);
+        s_harness_file_directory = ByteString::formatted("{}/", s_harness_file_directory);
     }
 
     if (timeout <= 0) {
@@ -650,10 +652,10 @@ int main(int argc, char** argv)
     auto collect_output = [&] {
         fflush(stdout);
         auto nread = read(stdout_pipe[0], buffer, BUFFER_SIZE);
-        String value;
+        Optional<ByteString> value;
 
         if (nread > 0) {
-            value = String { buffer, static_cast<size_t>(nread) };
+            value = ByteString { buffer, static_cast<size_t>(nread) };
             while (nread > 0) {
                 nread = read(stdout_pipe[0], buffer, BUFFER_SIZE);
             }
@@ -668,12 +670,12 @@ int main(int argc, char** argv)
 #define DISARM_TIMER() \
     alarm(0)
 
-    auto standard_input_or_error = Core::Stream::File::standard_input();
+    auto standard_input_or_error = Core::File::standard_input();
     if (standard_input_or_error.is_error())
         return exit_setup_input_failure;
 
     Array<u8, 1024> input_buffer {};
-    auto buffered_standard_input_or_error = Core::Stream::BufferedFile::create(standard_input_or_error.release_value());
+    auto buffered_standard_input_or_error = Core::InputBufferedFile::create(standard_input_or_error.release_value());
     if (buffered_standard_input_or_error.is_error())
         return exit_setup_input_failure;
 
@@ -697,7 +699,7 @@ int main(int argc, char** argv)
             VERIFY(!s_harness_file_directory.is_empty());
         }
 
-        auto file_or_error = Core::Stream::File::open(path, Core::Stream::OpenMode::Read);
+        auto file_or_error = Core::File::open(path, Core::File::OpenMode::Read);
         if (file_or_error.is_error()) {
             warnln("Could not open file: {}", path);
             return exit_read_file_failure;
@@ -706,12 +708,12 @@ int main(int argc, char** argv)
 
         count++;
 
-        String source_with_strict;
+        ByteString source_with_strict;
         static StringView use_strict = "'use strict';\n"sv;
         static size_t strict_length = use_strict.length();
 
         {
-            auto contents_or_error = file->read_all();
+            auto contents_or_error = file->read_until_eof();
             if (contents_or_error.is_error()) {
                 warnln("Could not read contents of file: {}", path);
                 return exit_read_file_failure;
@@ -720,7 +722,7 @@ int main(int argc, char** argv)
             StringBuilder builder { contents.size() + strict_length };
             builder.append(use_strict);
             builder.append(contents);
-            source_with_strict = builder.to_string();
+            source_with_strict = builder.to_byte_string();
         }
 
         StringView with_strict = source_with_strict.view();
@@ -730,7 +732,7 @@ int main(int argc, char** argv)
         result_object.set("test", path);
 
         ScopeGuard output_guard = [&] {
-            outln(saved_stdout_fd, "RESULT {}{}", result_object.to_string(), '\0');
+            outln(saved_stdout_fd, "RESULT {}{}", result_object.to_byte_string(), '\0');
             fflush(saved_stdout_fd);
         };
 
@@ -743,6 +745,10 @@ int main(int argc, char** argv)
         }
 
         auto& metadata = metadata_or_error.value();
+        if (metadata.skip_test == SkipTest::Yes) {
+            result_object.set("result", "skipped");
+            continue;
+        }
 
         bool passed = true;
 
@@ -753,16 +759,17 @@ int main(int argc, char** argv)
             auto result = run_test(original_contents, path, metadata);
             DISARM_TIMER();
 
-            String first_output = collect_output();
-            if (!first_output.is_null())
-                result_object.set("output", first_output);
+            auto first_output = collect_output();
+            if (first_output.has_value())
+                result_object.set("output", *first_output);
 
             passed = verify_test(result, metadata, result_object);
+            auto output = first_output.value_or("");
             if (metadata.is_async && !s_parse_only) {
-                if (!first_output.contains("Test262:AsyncTestComplete"sv) || first_output.contains("Test262:AsyncTestFailure"sv)) {
+                if (!output.contains("Test262:AsyncTestComplete"sv) || output.contains("Test262:AsyncTestFailure"sv)) {
                     result_object.set("async_fail", true);
-                    if (first_output.is_null())
-                        result_object.set("output", JsonValue { AK::JsonValue::Type::Null });
+                    if (!first_output.has_value())
+                        result_object.set("output", JsonValue {});
 
                     passed = false;
                 }
@@ -776,16 +783,18 @@ int main(int argc, char** argv)
             auto result = run_test(with_strict, path, metadata);
             DISARM_TIMER();
 
-            String first_output = collect_output();
-            if (!first_output.is_null())
-                result_object.set("strict_output", first_output);
+            auto first_output = collect_output();
+            if (first_output.has_value())
+                result_object.set("strict_output", *first_output);
 
             passed = verify_test(result, metadata, result_object);
+            auto output = first_output.value_or("");
+
             if (metadata.is_async && !s_parse_only) {
-                if (!first_output.contains("Test262:AsyncTestComplete"sv) || first_output.contains("Test262:AsyncTestFailure"sv)) {
+                if (!output.contains("Test262:AsyncTestComplete"sv) || output.contains("Test262:AsyncTestFailure"sv)) {
                     result_object.set("async_fail", true);
-                    if (first_output.is_null())
-                        result_object.set("output", JsonValue { AK::JsonValue::Type::Null });
+                    if (!first_output.has_value())
+                        result_object.set("output", JsonValue {});
 
                     passed = false;
                 }

@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibDSP/ProcessorParameter.h>
 #include <LibGUI/CheckBox.h>
 #include <LibGUI/Widget.h>
@@ -16,8 +16,7 @@ class ProcessorParameterToggle : public GUI::CheckBox {
 
 public:
     ProcessorParameterToggle(DSP::ProcessorBooleanParameter& parameter)
-        : CheckBox("")
-        , m_parameter(parameter)
+        : m_parameter(parameter)
     {
         on_checked = [this](auto checked) {
             if (m_currently_setting_from_ui)

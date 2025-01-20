@@ -7,7 +7,9 @@
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/Span.h>
+#include <AK/String.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 
 namespace Crypto {
@@ -16,11 +18,11 @@ struct SignedDivisionResult;
 
 class SignedBigInteger {
 public:
-    template<typename T>
-    requires(IsSigned<T> && sizeof(T) <= sizeof(i32))
-        SignedBigInteger(T value)
+    template<Signed T>
+    requires(sizeof(T) <= sizeof(i32))
+    SignedBigInteger(T value)
         : m_sign(value < 0)
-        , m_unsigned_data(abs(static_cast<i32>(value)))
+        , m_unsigned_data(static_cast<u32>(abs(static_cast<i64>(value))))
     {
     }
 
@@ -61,8 +63,9 @@ public:
 
     size_t export_data(Bytes, bool remove_leading_zeros = false) const;
 
-    [[nodiscard]] static SignedBigInteger from_base(u16 N, StringView str);
-    [[nodiscard]] String to_base(u16 N) const;
+    [[nodiscard]] static ErrorOr<SignedBigInteger> from_base(u16 N, StringView str);
+    [[nodiscard]] ErrorOr<String> to_base(u16 N) const;
+    [[nodiscard]] ByteString to_base_deprecated(u16 N) const;
 
     [[nodiscard]] u64 to_u64() const;
     [[nodiscard]] double to_double(UnsignedBigInteger::RoundingMode rounding_mode = UnsignedBigInteger::RoundingMode::IEEERoundAndTiesToEvenMantissa) const;
@@ -105,7 +108,7 @@ public:
 
     // These get + 1 byte for the sign.
     [[nodiscard]] size_t length() const { return m_unsigned_data.length() + 1; }
-    [[nodiscard]] size_t trimmed_length() const { return m_unsigned_data.trimmed_length() + 1; };
+    [[nodiscard]] size_t trimmed_length() const { return m_unsigned_data.trimmed_length() + 1; }
 
     [[nodiscard]] SignedBigInteger plus(SignedBigInteger const& other) const;
     [[nodiscard]] SignedBigInteger minus(SignedBigInteger const& other) const;
@@ -114,6 +117,7 @@ public:
     [[nodiscard]] SignedBigInteger bitwise_xor(SignedBigInteger const& other) const;
     [[nodiscard]] SignedBigInteger bitwise_not() const;
     [[nodiscard]] SignedBigInteger shift_left(size_t num_bits) const;
+    [[nodiscard]] SignedBigInteger shift_right(size_t num_bits) const;
     [[nodiscard]] SignedBigInteger multiplied_by(SignedBigInteger const& other) const;
     [[nodiscard]] SignedDivisionResult divided_by(SignedBigInteger const& divisor) const;
 
@@ -140,13 +144,7 @@ public:
     [[nodiscard]] bool operator<(UnsignedBigInteger const& other) const;
     [[nodiscard]] bool operator>(UnsignedBigInteger const& other) const;
 
-    enum class CompareResult {
-        DoubleEqualsBigInt,
-        DoubleLessThanBigInt,
-        DoubleGreaterThanBigInt
-    };
-
-    [[nodiscard]] CompareResult compare_to_double(double) const;
+    [[nodiscard]] UnsignedBigInteger::CompareResult compare_to_double(double) const;
 
 private:
     void ensure_sign_is_valid()
@@ -174,5 +172,5 @@ struct AK::Formatter<Crypto::SignedBigInteger> : AK::Formatter<Crypto::UnsignedB
 inline Crypto::SignedBigInteger
 operator""_sbigint(char const* string, size_t length)
 {
-    return Crypto::SignedBigInteger::from_base(10, { string, length });
+    return MUST(Crypto::SignedBigInteger::from_base(10, { string, length }));
 }

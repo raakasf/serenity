@@ -7,7 +7,6 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/Debug.h>
 #include <LibGL/GLContext.h>
 
 namespace GL {
@@ -126,6 +125,7 @@ void GLContext::gl_pop_matrix()
 
     m_current_matrix_stack->take_last();
     m_current_matrix = &m_current_matrix_stack->last();
+    m_matrices_dirty = true;
 }
 
 void GLContext::gl_push_matrix()
@@ -136,6 +136,7 @@ void GLContext::gl_push_matrix()
 
     m_current_matrix_stack->append(*m_current_matrix);
     m_current_matrix = &m_current_matrix_stack->last();
+    m_matrices_dirty = true;
 }
 
 void GLContext::gl_rotate(GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
@@ -146,26 +147,37 @@ void GLContext::gl_rotate(GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
     FloatVector3 axis = { x, y, z };
     if (axis.length() > 0.f)
         axis.normalize();
-    auto rotation_mat = Gfx::rotation_matrix(axis, angle * static_cast<float>(M_PI * 2 / 360));
+    auto rotation_mat = Gfx::rotation_matrix(axis, AK::to_radians(angle));
     update_current_matrix(*m_current_matrix * rotation_mat);
 }
 
-void GLContext::gl_scale(GLdouble x, GLdouble y, GLdouble z)
+void GLContext::gl_scale(GLfloat x, GLfloat y, GLfloat z)
 {
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_scale, x, y, z);
     RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
 
-    auto scale_matrix = Gfx::scale_matrix(FloatVector3 { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z) });
+    auto scale_matrix = Gfx::scale_matrix(FloatVector3 { x, y, z });
     update_current_matrix(*m_current_matrix * scale_matrix);
 }
 
-void GLContext::gl_translate(GLdouble x, GLdouble y, GLdouble z)
+void GLContext::gl_translate(GLfloat x, GLfloat y, GLfloat z)
 {
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_translate, x, y, z);
     RETURN_WITH_ERROR_IF(m_in_draw_state, GL_INVALID_OPERATION);
 
-    auto translation_matrix = Gfx::translation_matrix(FloatVector3 { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z) });
+    auto translation_matrix = Gfx::translation_matrix(FloatVector3 { x, y, z });
     update_current_matrix(*m_current_matrix * translation_matrix);
+}
+
+void GLContext::sync_matrices()
+{
+    if (!m_matrices_dirty)
+        return;
+
+    m_rasterizer->set_model_view_transform(model_view_matrix());
+    m_rasterizer->set_projection_transform(projection_matrix());
+
+    m_matrices_dirty = false;
 }
 
 }

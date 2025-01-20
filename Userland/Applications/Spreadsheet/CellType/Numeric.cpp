@@ -9,6 +9,7 @@
 #include "../Spreadsheet.h"
 #include "Format.h"
 #include <AK/ScopeGuard.h>
+#include <LibJS/Runtime/ValueInlines.h>
 
 namespace Spreadsheet {
 
@@ -17,14 +18,14 @@ NumericCell::NumericCell()
 {
 }
 
-JS::ThrowCompletionOr<String> NumericCell::display(Cell& cell, CellTypeMetadata const& metadata) const
+JS::ThrowCompletionOr<ByteString> NumericCell::display(Cell& cell, CellTypeMetadata const& metadata) const
 {
-    return propagate_failure(cell, [&]() -> JS::ThrowCompletionOr<String> {
+    return propagate_failure(cell, [&]() -> JS::ThrowCompletionOr<ByteString> {
         auto& vm = cell.sheet().global_object().vm();
         auto value = TRY(js_value(cell, metadata));
-        String string;
+        ByteString string;
         if (metadata.format.is_empty())
-            string = TRY(value.to_string(vm));
+            string = TRY(value.to_byte_string(vm));
         else
             string = format_double(metadata.format.characters(), TRY(value.to_double(vm)));
 
@@ -46,7 +47,7 @@ JS::ThrowCompletionOr<JS::Value> NumericCell::js_value(Cell& cell, CellTypeMetad
 String NumericCell::metadata_hint(MetadataName metadata) const
 {
     if (metadata == MetadataName::Format)
-        return "Format string as accepted by `printf', all numeric formats refer to the same value (the cell's value)";
+        return "Format string as accepted by `printf', all numeric formats refer to the same value (the cell's value)"_string;
 
     return {};
 }

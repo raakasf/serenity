@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,15 +14,17 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(ListFormatConstructor);
+
 // 13.1 The Intl.ListFormat Constructor, https://tc39.es/ecma402/#sec-intl-listformat-constructor
 ListFormatConstructor::ListFormatConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.ListFormat.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.ListFormat.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void ListFormatConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -43,7 +45,7 @@ ThrowCompletionOr<Value> ListFormatConstructor::call()
 }
 
 // 13.1.1 Intl.ListFormat ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-Intl.ListFormat
-ThrowCompletionOr<Object*> ListFormatConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> ListFormatConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
@@ -51,7 +53,7 @@ ThrowCompletionOr<Object*> ListFormatConstructor::construct(FunctionObject& new_
     auto options_value = vm.argument(1);
 
     // 2. Let listFormat be ? OrdinaryCreateFromConstructor(NewTarget, "%ListFormat.prototype%", « [[InitializedListFormat]], [[Locale]], [[Type]], [[Style]], [[Templates]] »).
-    auto* list_format = TRY(ordinary_create_from_constructor<ListFormat>(vm, new_target, &Intrinsics::intl_list_format_prototype));
+    auto list_format = TRY(ordinary_create_from_constructor<ListFormat>(vm, new_target, &Intrinsics::intl_list_format_prototype));
 
     // 3. Let requestedLocales be ? CanonicalizeLocaleList(locales).
     auto requested_locales = TRY(canonicalize_locale_list(vm, locale_value));
@@ -62,7 +64,7 @@ ThrowCompletionOr<Object*> ListFormatConstructor::construct(FunctionObject& new_
     // 5. Let opt be a new Record.
     LocaleOptions opt {};
 
-    // 6. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+    // 6. Let matcher be ? GetOption(options, "localeMatcher", string, « "lookup", "best fit" », "best fit").
     auto matcher = TRY(get_option(vm, *options, vm.names.localeMatcher, OptionType::String, { "lookup"sv, "best fit"sv }, "best fit"sv));
 
     // 7. Set opt.[[localeMatcher]] to matcher.
@@ -76,17 +78,17 @@ ThrowCompletionOr<Object*> ListFormatConstructor::construct(FunctionObject& new_
     // 10. Set listFormat.[[Locale]] to r.[[locale]].
     list_format->set_locale(move(result.locale));
 
-    // 11. Let type be ? GetOption(options, "type", "string", « "conjunction", "disjunction", "unit" », "conjunction").
+    // 11. Let type be ? GetOption(options, "type", string, « "conjunction", "disjunction", "unit" », "conjunction").
     auto type = TRY(get_option(vm, *options, vm.names.type, OptionType::String, { "conjunction"sv, "disjunction"sv, "unit"sv }, "conjunction"sv));
 
     // 12. Set listFormat.[[Type]] to type.
-    list_format->set_type(type.as_string().string());
+    list_format->set_type(type.as_string().utf8_string_view());
 
-    // 13. Let style be ? GetOption(options, "style", "string", « "long", "short", "narrow" », "long").
+    // 13. Let style be ? GetOption(options, "style", string, « "long", "short", "narrow" », "long").
     auto style = TRY(get_option(vm, *options, vm.names.style, OptionType::String, { "long"sv, "short"sv, "narrow"sv }, "long"sv));
 
     // 14. Set listFormat.[[Style]] to style.
-    list_format->set_style(style.as_string().string());
+    list_format->set_style(style.as_string().utf8_string_view());
 
     // Note: The remaining steps are skipped in favor of deferring to LibUnicode.
 

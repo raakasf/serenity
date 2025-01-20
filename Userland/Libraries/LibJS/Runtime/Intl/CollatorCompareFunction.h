@@ -12,9 +12,10 @@ namespace JS::Intl {
 
 class CollatorCompareFunction : public NativeFunction {
     JS_OBJECT(CollatorCompareFunction, NativeFunction);
+    JS_DECLARE_ALLOCATOR(CollatorCompareFunction);
 
 public:
-    static CollatorCompareFunction* create(Realm&, Collator&);
+    static NonnullGCPtr<CollatorCompareFunction> create(Realm&, Collator&);
 
     virtual void initialize(Realm&) override;
     virtual ~CollatorCompareFunction() override = default;
@@ -26,7 +27,7 @@ private:
 
     virtual void visit_edges(Visitor&) override;
 
-    Collator& m_collator; // [[Collator]]
+    NonnullGCPtr<Collator> m_collator; // [[Collator]]
 };
 
 double compare_strings(Collator&, Utf8View const& x, Utf8View const& y);

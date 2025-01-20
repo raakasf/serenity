@@ -1,12 +1,15 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, David Ganz <david.g.ganz@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/EnumBits.h>
+#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
 #include <Kernel/API/KeyCode.h>
@@ -28,6 +31,7 @@ public:
         Paint,
         MultiPaint,
         Resize,
+        Move,
         MouseMove,
         MouseDown,
         MouseDoubleClick,
@@ -41,8 +45,8 @@ public:
         WindowLeft,
         WindowBecameInactive,
         WindowBecameActive,
-        WindowInputEntered,
-        WindowInputLeft,
+        WindowInputPreempted,
+        WindowInputRestored,
         FocusIn,
         FocusOut,
         WindowCloseRequest,
@@ -71,6 +75,7 @@ public:
         WM_SuperDigitKeyPressed,
         WM_WorkspaceChanged,
         WM_KeymapChanged,
+        WM_AddToQuickLaunch,
         __End_WM_Events,
     };
 
@@ -142,13 +147,13 @@ private:
 
 class WMAppletAreaSizeChangedEvent : public WMEvent {
 public:
-    explicit WMAppletAreaSizeChangedEvent(Gfx::IntSize const& size)
+    explicit WMAppletAreaSizeChangedEvent(Gfx::IntSize size)
         : WMEvent(Event::Type::WM_AppletAreaSizeChanged, 0, 0)
         , m_size(size)
     {
     }
 
-    Gfx::IntSize const& size() const { return m_size; }
+    Gfx::IntSize size() const { return m_size; }
 
 private:
     Gfx::IntSize m_size;
@@ -179,7 +184,7 @@ public:
     {
     }
 
-    String const& title() const { return m_title; }
+    ByteString const& title() const { return m_title; }
     Gfx::IntRect const& rect() const { return m_rect; }
     bool is_active() const { return m_active; }
     bool is_blocked() const { return m_blocked; }
@@ -191,7 +196,7 @@ public:
     unsigned workspace_column() const { return m_workspace_column; }
 
 private:
-    String m_title;
+    ByteString m_title;
     Gfx::IntRect m_rect;
     WindowType m_window_type;
     unsigned m_workspace_row;
@@ -228,7 +233,7 @@ public:
     Gfx::Bitmap const* bitmap() const { return m_bitmap; }
 
 private:
-    RefPtr<Gfx::Bitmap> m_bitmap;
+    RefPtr<Gfx::Bitmap const> m_bitmap;
 };
 
 class WMWorkspaceChangedEvent : public WMEvent {
@@ -250,21 +255,35 @@ private:
 
 class WMKeymapChangedEvent : public WMEvent {
 public:
-    explicit WMKeymapChangedEvent(int client_id, String const& keymap)
+    explicit WMKeymapChangedEvent(int client_id, ByteString const& keymap)
         : WMEvent(Event::Type::WM_KeymapChanged, client_id, 0)
         , m_keymap(keymap)
     {
     }
 
-    String const& keymap() const { return m_keymap; }
+    ByteString const& keymap() const { return m_keymap; }
 
 private:
-    const String m_keymap;
+    ByteString const m_keymap;
+};
+
+class WMAddToQuickLaunchEvent : public WMEvent {
+public:
+    explicit WMAddToQuickLaunchEvent(int client_id, pid_t pid)
+        : WMEvent(Event::Type::WM_AddToQuickLaunch, client_id, 0)
+        , m_pid(pid)
+    {
+    }
+
+    pid_t pid() const { return m_pid; }
+
+private:
+    pid_t m_pid;
 };
 
 class MultiPaintEvent final : public Event {
 public:
-    explicit MultiPaintEvent(Vector<Gfx::IntRect, 32> rects, Gfx::IntSize const& window_size)
+    explicit MultiPaintEvent(Vector<Gfx::IntRect, 32> rects, Gfx::IntSize window_size)
         : Event(Event::MultiPaint)
         , m_rects(move(rects))
         , m_window_size(window_size)
@@ -272,7 +291,7 @@ public:
     }
 
     Vector<Gfx::IntRect, 32> const& rects() const { return m_rects; }
-    Gfx::IntSize const& window_size() const { return m_window_size; }
+    Gfx::IntSize window_size() const { return m_window_size; }
 
 private:
     Vector<Gfx::IntRect, 32> m_rects;
@@ -281,7 +300,7 @@ private:
 
 class PaintEvent final : public Event {
 public:
-    explicit PaintEvent(Gfx::IntRect const& rect, Gfx::IntSize const& window_size = {})
+    explicit PaintEvent(Gfx::IntRect const& rect, Gfx::IntSize window_size = {})
         : Event(Event::Paint)
         , m_rect(rect)
         , m_window_size(window_size)
@@ -289,7 +308,7 @@ public:
     }
 
     Gfx::IntRect const& rect() const { return m_rect; }
-    Gfx::IntSize const& window_size() const { return m_window_size; }
+    Gfx::IntSize window_size() const { return m_window_size; }
 
 private:
     Gfx::IntRect m_rect;
@@ -298,29 +317,43 @@ private:
 
 class ResizeEvent final : public Event {
 public:
-    explicit ResizeEvent(Gfx::IntSize const& size)
+    explicit ResizeEvent(Gfx::IntSize size)
         : Event(Event::Resize)
         , m_size(size)
     {
     }
 
-    Gfx::IntSize const& size() const { return m_size; }
+    Gfx::IntSize size() const { return m_size; }
 
 private:
     Gfx::IntSize m_size;
 };
 
+class MoveEvent final : public Event {
+public:
+    explicit MoveEvent(Gfx::IntPoint size)
+        : Event(Event::Move)
+        , m_position(size)
+    {
+    }
+
+    Gfx::IntPoint position() const { return m_position; }
+
+private:
+    Gfx::IntPoint m_position;
+};
+
 class ContextMenuEvent final : public Event {
 public:
-    explicit ContextMenuEvent(Gfx::IntPoint const& position, Gfx::IntPoint const& screen_position)
+    explicit ContextMenuEvent(Gfx::IntPoint position, Gfx::IntPoint screen_position)
         : Event(Event::ContextMenu)
         , m_position(position)
         , m_screen_position(screen_position)
     {
     }
 
-    Gfx::IntPoint const& position() const { return m_position; }
-    Gfx::IntPoint const& screen_position() const { return m_screen_position; }
+    Gfx::IntPoint position() const { return m_position; }
+    Gfx::IntPoint screen_position() const { return m_screen_position; }
 
 private:
     Gfx::IntPoint m_position;
@@ -352,11 +385,14 @@ enum MouseButton : u8 {
     Forward = 16,
 };
 
+AK_ENUM_BITWISE_OPERATORS(MouseButton);
+
 class KeyEvent final : public Event {
 public:
-    KeyEvent(Type type, KeyCode key, u8 modifiers, u32 code_point, u32 scancode)
+    KeyEvent(Type type, KeyCode key, u8 map_entry_index, u8 modifiers, u32 code_point, u32 scancode)
         : Event(type)
         , m_key(key)
+        , m_map_entry_index(map_entry_index)
         , m_modifiers(modifiers)
         , m_code_point(code_point)
         , m_scancode(scancode)
@@ -371,15 +407,17 @@ public:
     bool super() const { return m_modifiers & Mod_Super; }
     u8 modifiers() const { return m_modifiers; }
     u32 code_point() const { return m_code_point; }
-    String text() const
+    ByteString text() const
     {
         StringBuilder sb;
         sb.append_code_point(m_code_point);
-        return sb.to_string();
+        return sb.to_byte_string();
     }
     u32 scancode() const { return m_scancode; }
 
-    String to_string() const;
+    u8 map_entry_index() const { return m_map_entry_index; }
+
+    ByteString to_byte_string() const;
 
     bool is_arrow_key() const
     {
@@ -397,6 +435,7 @@ public:
 private:
     friend class ConnectionToWindowServer;
     KeyCode m_key { KeyCode::Key_Invalid };
+    u8 m_map_entry_index { 0 };
     u8 m_modifiers { 0 };
     u32 m_code_point { 0 };
     u32 m_scancode { 0 };
@@ -404,7 +443,7 @@ private:
 
 class MouseEvent final : public Event {
 public:
-    MouseEvent(Type type, Gfx::IntPoint const& position, unsigned buttons, MouseButton button, unsigned modifiers, int wheel_delta_x, int wheel_delta_y, int wheel_raw_delta_x, int wheel_raw_delta_y)
+    MouseEvent(Type type, Gfx::IntPoint position, unsigned buttons, MouseButton button, unsigned modifiers, int wheel_delta_x, int wheel_delta_y, int wheel_raw_delta_x, int wheel_raw_delta_y)
         : Event(type)
         , m_position(position)
         , m_buttons(buttons)
@@ -417,7 +456,7 @@ public:
     {
     }
 
-    Gfx::IntPoint const& position() const { return m_position; }
+    Gfx::IntPoint position() const { return m_position; }
     int x() const { return m_position.x(); }
     int y() const { return m_position.y(); }
     MouseButton button() const { return m_button; }
@@ -443,37 +482,31 @@ private:
     int m_wheel_raw_delta_y { 0 };
 };
 
-class DragEvent final : public Event {
+class DropEvent : public Event {
 public:
-    DragEvent(Type type, Gfx::IntPoint const& position, Vector<String> mime_types)
-        : Event(type)
-        , m_position(position)
-        , m_mime_types(move(mime_types))
-    {
-    }
+    DropEvent(Type type, Gfx::IntPoint, MouseButton button, u32 buttons, u32 modifiers, ByteString const& text, NonnullRefPtr<Core::MimeData const> mime_data);
+    ~DropEvent();
 
-    Gfx::IntPoint const& position() const { return m_position; }
-    Vector<String> const& mime_types() const { return m_mime_types; }
-
-private:
-    Gfx::IntPoint m_position;
-    Vector<String> m_mime_types;
-};
-
-class DropEvent final : public Event {
-public:
-    DropEvent(Gfx::IntPoint const&, String const& text, NonnullRefPtr<Core::MimeData> mime_data);
-
-    ~DropEvent() = default;
-
-    Gfx::IntPoint const& position() const { return m_position; }
-    String const& text() const { return m_text; }
+    Gfx::IntPoint position() const { return m_position; }
+    MouseButton button() const { return m_button; }
+    unsigned buttons() const { return m_buttons; }
+    unsigned modifiers() const { return m_modifiers; }
+    ByteString const& text() const { return m_text; }
     Core::MimeData const& mime_data() const { return m_mime_data; }
 
 private:
     Gfx::IntPoint m_position;
-    String m_text;
-    NonnullRefPtr<Core::MimeData> m_mime_data;
+    MouseButton m_button { MouseButton::None };
+    unsigned m_buttons { 0 };
+    unsigned m_modifiers { 0 };
+    ByteString m_text;
+    NonnullRefPtr<Core::MimeData const> m_mime_data;
+};
+
+class DragEvent final : public DropEvent {
+public:
+    DragEvent(Type type, Gfx::IntPoint, MouseButton button, u32 buttons, u32 modifiers, ByteString const& text, NonnullRefPtr<Core::MimeData const> mime_data);
+    ~DragEvent();
 };
 
 class ThemeChangeEvent final : public Event {
@@ -540,7 +573,7 @@ private:
 class ActionEvent final : public Event {
 public:
     ActionEvent(Type, Action&);
-    ~ActionEvent() = default;
+    ~ActionEvent();
 
     Action const& action() const { return *m_action; }
     Action& action() { return *m_action; }

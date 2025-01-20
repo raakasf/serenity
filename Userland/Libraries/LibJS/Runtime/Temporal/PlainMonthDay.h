@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,6 +12,7 @@ namespace JS::Temporal {
 
 class PlainMonthDay final : public Object {
     JS_OBJECT(PlainMonthDay, Object);
+    JS_DECLARE_ALLOCATOR(PlainMonthDay);
 
 public:
     virtual ~PlainMonthDay() override = default;
@@ -28,10 +29,10 @@ private:
     virtual void visit_edges(Visitor&) override;
 
     // 10.4 Properties of Temporal.PlainMonthDay Instances, https://tc39.es/proposal-temporal/#sec-properties-of-temporal-plainmonthday-instances
-    i32 m_iso_year { 0 }; // [[ISOYear]]
-    u8 m_iso_month { 0 }; // [[ISOMonth]]
-    u8 m_iso_day { 0 };   // [[ISODay]]
-    Object& m_calendar;   // [[Calendar]]
+    i32 m_iso_year { 0 };            // [[ISOYear]]
+    u8 m_iso_month { 0 };            // [[ISOMonth]]
+    u8 m_iso_day { 0 };              // [[ISODay]]
+    NonnullGCPtr<Object> m_calendar; // [[Calendar]]
 };
 
 struct ISOMonthDay {

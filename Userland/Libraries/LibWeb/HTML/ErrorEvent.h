@@ -6,14 +6,15 @@
 
 #pragma once
 
+#include <AK/FlyString.h>
 #include <LibWeb/DOM/Event.h>
 
 namespace Web::HTML {
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#erroreventinit
 struct ErrorEventInit : public DOM::EventInit {
-    String message { "" };
-    String filename { "" }; // FIXME: This should be a USVString.
+    String message;
+    String filename; // FIXME: This should be a USVString.
     u32 lineno { 0 };
     u32 colno { 0 };
     JS::Value error { JS::js_null() };
@@ -22,10 +23,11 @@ struct ErrorEventInit : public DOM::EventInit {
 // https://html.spec.whatwg.org/multipage/webappapis.html#errorevent
 class ErrorEvent final : public DOM::Event {
     WEB_PLATFORM_OBJECT(ErrorEvent, DOM::Event);
+    JS_DECLARE_ALLOCATOR(ErrorEvent);
 
 public:
-    static ErrorEvent* create(JS::Realm&, FlyString const& event_name, ErrorEventInit const& event_init = {});
-    static ErrorEvent* construct_impl(JS::Realm&, FlyString const& event_name, ErrorEventInit const& event_init);
+    [[nodiscard]] static JS::NonnullGCPtr<ErrorEvent> create(JS::Realm&, FlyString const& event_name, ErrorEventInit const& = {});
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<ErrorEvent>> construct_impl(JS::Realm&, FlyString const& event_name, ErrorEventInit const& event_init);
 
     virtual ~ErrorEvent() override;
 
@@ -47,10 +49,11 @@ public:
 private:
     ErrorEvent(JS::Realm&, FlyString const& event_name, ErrorEventInit const& event_init);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
-    String m_message { "" };
-    String m_filename { "" }; // FIXME: This should be a USVString.
+    String m_message;
+    String m_filename; // FIXME: This should be a USVString.
     u32 m_lineno { 0 };
     u32 m_colno { 0 };
     JS::Value m_error;

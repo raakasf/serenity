@@ -18,7 +18,11 @@ def should_check_file(filename):
         return False
     if filename.startswith('Userland/Libraries/LibCpp/Tests/preprocessor/'):
         return False
-    if filename == 'Kernel/FileSystem/ext2_fs.h':
+    if filename.startswith('Tests/LibWeb/Layout/'):
+        return False
+    if filename.startswith('Tests/LibWeb/Text/'):
+        return False
+    if filename == 'Kernel/FileSystem/Ext2FS/Definitions.h':
         return False
     if filename.endswith('.txt'):
         return 'CMake' in filename

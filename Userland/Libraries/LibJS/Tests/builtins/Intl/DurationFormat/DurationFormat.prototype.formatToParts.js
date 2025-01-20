@@ -124,13 +124,13 @@ describe("correct behavior", () => {
         expect(new Intl.DurationFormat("en", { style: "digital" }).formatToParts(duration)).toEqual(
             [
                 { type: "element", value: "1 yr" },
-                { type: "literal", value: " " },
+                { type: "literal", value: ", " },
                 { type: "element", value: "2 mths" },
-                { type: "literal", value: " " },
+                { type: "literal", value: ", " },
                 { type: "element", value: "3 wks" },
-                { type: "literal", value: " " },
+                { type: "literal", value: ", " },
                 { type: "element", value: "3 days" },
-                { type: "literal", value: " " },
+                { type: "literal", value: ", " },
                 { type: "element", value: "4:05:06" },
             ]
         );
@@ -266,7 +266,11 @@ describe("correct behavior", () => {
 
 describe("errors", () => {
     test("non-object duration records", () => {
-        [-100, Infinity, NaN, "hello", 152n, Symbol("foo")].forEach(value => {
+        expect(() => {
+            new Intl.DurationFormat().formatToParts("hello");
+        }).toThrowWithMessage(RangeError, "is not an object");
+
+        [-100, Infinity, NaN, 152n, Symbol("foo"), true, null, undefined].forEach(value => {
             expect(() => {
                 new Intl.DurationFormat().formatToParts(value);
             }).toThrowWithMessage(TypeError, "is not an object");

@@ -4,14 +4,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/AbstractRangePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/AbstractRange.h>
 #include <LibWeb/DOM/Document.h>
 
 namespace Web::DOM {
 
-AbstractRange::AbstractRange(Node& start_container, u32 start_offset, Node& end_container, u32 end_offset)
-    : Bindings::PlatformObject(Bindings::cached_web_prototype(start_container.realm(), "AbstractRange"))
+AbstractRange::AbstractRange(Node& start_container, WebIDL::UnsignedLong start_offset, Node& end_container, WebIDL::UnsignedLong end_offset)
+    : Bindings::PlatformObject(start_container.realm())
     , m_start_container(start_container)
     , m_start_offset(start_offset)
     , m_end_container(end_container)
@@ -21,11 +22,17 @@ AbstractRange::AbstractRange(Node& start_container, u32 start_offset, Node& end_
 
 AbstractRange::~AbstractRange() = default;
 
+void AbstractRange::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(AbstractRange);
+}
+
 void AbstractRange::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_start_container.ptr());
-    visitor.visit(m_end_container.ptr());
+    visitor.visit(m_start_container);
+    visitor.visit(m_end_container);
 }
 
 }

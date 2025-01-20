@@ -5,7 +5,6 @@
  */
 
 #include <AK/HashMap.h>
-#include <AK/String.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/Object.h>
@@ -13,24 +12,20 @@
 
 namespace Web::Bindings {
 
-JS::Object& Intrinsics::cached_web_prototype(String const& class_name)
-{
-    auto it = m_prototypes.find(class_name);
-    if (it == m_prototypes.end()) {
-        dbgln("Missing prototype: {}", class_name);
-    }
-    VERIFY(it != m_prototypes.end());
-    return *it->value;
-}
+JS_DEFINE_ALLOCATOR(Intrinsics);
 
 void Intrinsics::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_namespaces);
+    visitor.visit(m_prototypes);
+    visitor.visit(m_constructors);
+    visitor.visit(m_realm);
+}
 
-    for (auto& it : m_prototypes)
-        visitor.visit(it.value);
-    for (auto& it : m_constructors)
-        visitor.visit(it.value);
+bool Intrinsics::is_exposed(StringView name) const
+{
+    return m_constructors.contains(name) || m_prototypes.contains(name) || m_namespaces.contains(name);
 }
 
 }

@@ -55,7 +55,7 @@ public:
                 auto rect = rect_for_desktop(row, column);
                 painter.fill_rect(rect,
                     (row == current_row() && column == current_column()) ? active_color : inactive_color);
-                Gfx::StylePainter::current().paint_frame(painter, rect, palette(), Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 1);
+                Gfx::StylePainter::current().paint_frame(painter, rect, palette(), Gfx::FrameStyle::SunkenPanel);
             }
         }
     }
@@ -109,7 +109,7 @@ public:
         if (!m_context_menu) {
             m_context_menu = GUI::Menu::construct();
 
-            auto settings_icon = MUST(Gfx::Bitmap::try_load_from_file("/res/icons/16x16/settings.png"sv));
+            auto settings_icon = MUST(Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"sv));
             auto open_workspace_settings_action = GUI::Action::create("Workspace &Settings", *settings_icon, [](auto&) {
                 auto result = Core::Process::spawn("/bin/DisplaySettings"sv, Array { "--open-tab", "workspaces" }.span());
                 if (result.is_error()) {
@@ -148,7 +148,7 @@ DesktopStatusWindow::DesktopStatusWindow()
 {
     set_window_type(GUI::WindowType::Applet);
     set_has_alpha_channel(true);
-    m_widget = &set_main_widget<DesktopStatusWidget>();
+    m_widget = set_main_widget<DesktopStatusWidget>();
 }
 
 void DesktopStatusWindow::wm_event(GUI::WMEvent& event)

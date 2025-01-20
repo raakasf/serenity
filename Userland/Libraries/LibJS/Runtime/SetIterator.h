@@ -14,9 +14,10 @@ namespace JS {
 
 class SetIterator final : public Object {
     JS_OBJECT(SetIterator, Object);
+    JS_DECLARE_ALLOCATOR(SetIterator);
 
 public:
-    static SetIterator* create(Realm&, Set& set, Object::PropertyKind iteration_kind);
+    static NonnullGCPtr<SetIterator> create(Realm&, Set& set, Object::PropertyKind iteration_kind);
 
     virtual ~SetIterator() override = default;
 
@@ -31,7 +32,7 @@ private:
 
     virtual void visit_edges(Cell::Visitor&) override;
 
-    Set& m_set;
+    NonnullGCPtr<Set> m_set;
     bool m_done { false };
     Object::PropertyKind m_iteration_kind;
     Map::ConstIterator m_iterator;

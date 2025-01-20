@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -20,22 +20,25 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(ZonedDateTimePrototype);
+
 // 6.3 Properties of the Temporal.ZonedDateTime Prototype Object, https://tc39.es/proposal-temporal/#sec-properties-of-the-temporal-zoneddatetime-prototype-object
 ZonedDateTimePrototype::ZonedDateTimePrototype(Realm& realm)
-    : PrototypeObject(*realm.intrinsics().object_prototype())
+    : PrototypeObject(realm.intrinsics().object_prototype())
 {
 }
 
 void ZonedDateTimePrototype::initialize(Realm& realm)
 {
-    Object::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
     // 6.3.2 Temporal.ZonedDateTime.prototype[ @@toStringTag ], https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, "Temporal.ZonedDateTime"), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Temporal.ZonedDateTime"_string), Attribute::Configurable);
 
     define_native_accessor(realm, vm.names.calendar, calendar_getter, {}, Attribute::Configurable);
+    define_native_accessor(realm, vm.names.calendarId, calendar_id_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.timeZone, time_zone_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.year, year_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.month, month_getter, {}, Attribute::Configurable);
@@ -54,6 +57,7 @@ void ZonedDateTimePrototype::initialize(Realm& realm)
     define_native_accessor(realm, vm.names.dayOfWeek, day_of_week_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.dayOfYear, day_of_year_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.weekOfYear, week_of_year_getter, {}, Attribute::Configurable);
+    define_native_accessor(realm, vm.names.yearOfWeek, year_of_week_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.hoursInDay, hours_in_day_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.daysInWeek, days_in_week_getter, {}, Attribute::Configurable);
     define_native_accessor(realm, vm.names.daysInMonth, days_in_month_getter, {}, Attribute::Configurable);
@@ -96,7 +100,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::calendar_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return zonedDateTime.[[Calendar]].
     return Value(&zoned_date_time->calendar());
@@ -107,7 +111,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::time_zone_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return zonedDateTime.[[TimeZone]].
     return Value(&zoned_date_time->time_zone());
@@ -118,7 +122,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -132,8 +136,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::year_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarYear(calendar, temporalDateTime).
-    return Value(TRY(calendar_year(vm, calendar, *temporal_date_time)));
+    // 7. Return 𝔽(? CalendarYear(calendar, temporalDateTime)).
+    return TRY(calendar_year(vm, calendar, *temporal_date_time));
 }
 
 // 6.3.6 get Temporal.ZonedDateTime.prototype.month, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.month
@@ -141,7 +145,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::month_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -155,8 +159,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::month_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarMonth(calendar, temporalDateTime).
-    return Value(TRY(calendar_month(vm, calendar, *temporal_date_time)));
+    // 7. Return 𝔽(? CalendarMonth(calendar, temporalDateTime)).
+    return TRY(calendar_month(vm, calendar, *temporal_date_time));
 }
 
 // 6.3.7 get Temporal.ZonedDateTime.prototype.monthCode, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.monthcode
@@ -164,7 +168,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::month_code_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -179,7 +183,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::month_code_getter)
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
     // 7. Return ? CalendarMonthCode(calendar, temporalDateTime).
-    return js_string(vm, TRY(calendar_month_code(vm, calendar, *temporal_date_time)));
+    return PrimitiveString::create(vm, TRY(calendar_month_code(vm, calendar, *temporal_date_time)));
 }
 
 // 6.3.8 get Temporal.ZonedDateTime.prototype.day, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.day
@@ -187,7 +191,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -201,8 +205,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDay(calendar, temporalDateTime).
-    return Value(TRY(calendar_day(vm, calendar, *temporal_date_time)));
+    // 7. Return 𝔽(? CalendarDay(calendar, temporalDateTime)).
+    return TRY(calendar_day(vm, calendar, *temporal_date_time));
 }
 
 // 6.3.9 get Temporal.ZonedDateTime.prototype.hour, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.hour
@@ -210,7 +214,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::hour_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -233,7 +237,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::minute_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -256,7 +260,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::second_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -279,7 +283,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::millisecond_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -302,7 +306,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::microsecond_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -325,7 +329,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::nanosecond_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -348,7 +352,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_seconds_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let ns be zonedDateTime.[[Nanoseconds]].
     auto& ns = zoned_date_time->nanoseconds();
@@ -357,7 +361,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_seconds_getter)
     auto s = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000'000'000 }).quotient;
 
     // 5. Return 𝔽(s).
-    return Value((double)s.to_base(10).to_int<i64>().value());
+    return Value((double)s.to_base_deprecated(10).to_number<i64>().value());
 }
 
 // 6.3.16 get Temporal.ZonedDateTime.prototype.epochMilliseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.epochmilliseconds
@@ -365,7 +369,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_milliseconds_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let ns be zonedDateTime.[[Nanoseconds]].
     auto& ns = zoned_date_time->nanoseconds();
@@ -374,7 +378,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_milliseconds_getter)
     auto ms = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000'000 }).quotient;
 
     // 5. Return 𝔽(ms).
-    return Value((double)ms.to_base(10).to_int<i64>().value());
+    return Value((double)ms.to_base_deprecated(10).to_number<i64>().value());
 }
 
 // 6.3.17 get Temporal.ZonedDateTime.prototype.epochMicroseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.epochmicroseconds
@@ -382,7 +386,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_microseconds_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let ns be zonedDateTime.[[Nanoseconds]].
     auto& ns = zoned_date_time->nanoseconds();
@@ -391,7 +395,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_microseconds_getter)
     auto us = ns.big_integer().divided_by(Crypto::UnsignedBigInteger { 1'000 }).quotient;
 
     // 5. Return ℤ(µs).
-    return js_bigint(vm, move(us));
+    return BigInt::create(vm, move(us));
 }
 
 // 6.3.18 get Temporal.ZonedDateTime.prototype.epochNanoseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.epochnanoseconds
@@ -399,7 +403,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::epoch_nanoseconds_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return zonedDateTime.[[Nanoseconds]].
     return &zoned_date_time->nanoseconds();
@@ -410,7 +414,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_of_week_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -424,7 +428,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_of_week_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDayOfWeek(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarDayOfWeek(calendar, temporalDateTime)).
     return TRY(calendar_day_of_week(vm, calendar, *temporal_date_time));
 }
 
@@ -433,7 +437,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_of_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -447,7 +451,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::day_of_year_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDayOfYear(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarDayOfYear(calendar, temporalDateTime)).
     return TRY(calendar_day_of_year(vm, calendar, *temporal_date_time));
 }
 
@@ -456,7 +460,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::week_of_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -470,16 +474,39 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::week_of_year_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarWeekOfYear(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarWeekOfYear(calendar, temporalDateTime)).
     return TRY(calendar_week_of_year(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.22 get Temporal.ZonedDateTime.prototype.hoursInDay, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.hoursinday
+// 6.3.22 get Temporal.ZonedDateTime.prototype.yearOfWeek, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.yearofweek
+JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::year_of_week_getter)
+{
+    // 1. Let zonedDateTime be the this value.
+    // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
+    auto zoned_date_time = TRY(typed_this_object(vm));
+
+    // 3. Let timeZone be zonedDateTime.[[TimeZone]].
+    auto& time_zone = zoned_date_time->time_zone();
+
+    // 4. Let instant be ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
+    auto* instant = MUST(create_temporal_instant(vm, zoned_date_time->nanoseconds()));
+
+    // 5. Let calendar be zonedDateTime.[[Calendar]].
+    auto& calendar = zoned_date_time->calendar();
+
+    // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
+    auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
+
+    // 7. Return 𝔽(? CalendarYearOfWeek(calendar, temporalDateTime)).
+    return TRY(calendar_year_of_week(vm, calendar, *temporal_date_time));
+}
+
+// 6.3.23 get Temporal.ZonedDateTime.prototype.hoursInDay, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.hoursinday
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::hours_in_day_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -512,10 +539,10 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::hours_in_day_getter)
     auto* tomorrow = TRY(create_temporal_date_time(vm, tomorrow_fields.year, tomorrow_fields.month, tomorrow_fields.day, 0, 0, 0, 0, 0, 0, *iso_calendar));
 
     // 13. Let todayInstant be ? BuiltinTimeZoneGetInstantFor(timeZone, today, "compatible").
-    auto* today_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *today, "compatible"sv));
+    auto today_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *today, "compatible"sv));
 
     // 14. Let tomorrowInstant be ? BuiltinTimeZoneGetInstantFor(timeZone, tomorrow, "compatible").
-    auto* tomorrow_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *tomorrow, "compatible"sv));
+    auto tomorrow_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *tomorrow, "compatible"sv));
 
     // 15. Let diffNs be tomorrowInstant.[[Nanoseconds]] - todayInstant.[[Nanoseconds]].
     auto diff_ns = tomorrow_instant->nanoseconds().big_integer().minus(today_instant->nanoseconds().big_integer());
@@ -525,12 +552,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::hours_in_day_getter)
     return Value(hours_diff_ns.to_double());
 }
 
-// 6.3.23 get Temporal.ZonedDateTime.prototype.daysInWeek, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinweek
+// 6.3.24 get Temporal.ZonedDateTime.prototype.daysInWeek, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinweek
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_week_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -544,16 +571,16 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_week_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDaysInWeek(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarDaysInWeek(calendar, temporalDateTime)).
     return TRY(calendar_days_in_week(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.24 get Temporal.ZonedDateTime.prototype.daysInMonth, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinmonth
+// 6.3.25 get Temporal.ZonedDateTime.prototype.daysInMonth, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinmonth
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_month_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -567,16 +594,16 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_month_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDaysInMonth(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarDaysInMonth(calendar, temporalDateTime)).
     return TRY(calendar_days_in_month(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.25 get Temporal.ZonedDateTime.prototype.daysInYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinyear
+// 6.3.26 get Temporal.ZonedDateTime.prototype.daysInYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.daysinyear
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -590,16 +617,16 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::days_in_year_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarDaysInYear(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarDaysInYear(calendar, temporalDateTime)).
     return TRY(calendar_days_in_year(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.26 get Temporal.ZonedDateTime.prototype.monthsInYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.monthsinyear
+// 6.3.27 get Temporal.ZonedDateTime.prototype.monthsInYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.monthsinyear
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::months_in_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -613,16 +640,16 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::months_in_year_getter)
     // 6. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 7. Return ? CalendarMonthsInYear(calendar, temporalDateTime).
+    // 7. Return 𝔽(? CalendarMonthsInYear(calendar, temporalDateTime)).
     return TRY(calendar_months_in_year(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.27 get Temporal.ZonedDateTime.prototype.inLeapYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.inleapyear
+// 6.3.28 get Temporal.ZonedDateTime.prototype.inLeapYear, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.inleapyear
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::in_leap_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -640,36 +667,37 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::in_leap_year_getter)
     return TRY(calendar_in_leap_year(vm, calendar, *temporal_date_time));
 }
 
-// 6.3.28 get Temporal.ZonedDateTime.prototype.offsetNanoseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.offsetnanoseconds
+// 6.3.29 get Temporal.ZonedDateTime.prototype.offsetNanoseconds, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.offsetnanoseconds
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::offset_nanoseconds_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
-    auto& time_zone = zoned_date_time->time_zone();
+    // 3. Let timeZoneRec be ? CreateTimeZoneMethodsRecord(zonedDateTime.[[TimeZone]], « GET-OFFSET-NANOSECONDS-FOR »).
+    auto time_zone_record = TRY(create_time_zone_methods_record(vm, NonnullGCPtr<Object> { zoned_date_time->time_zone() }, { { TimeZoneMethod::GetOffsetNanosecondsFor } }));
 
     // 4. Let instant be ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
     auto* instant = MUST(create_temporal_instant(vm, zoned_date_time->nanoseconds()));
 
-    // 5. Return 𝔽(? GetOffsetNanosecondsFor(timeZone, instant)).
-    return Value(TRY(get_offset_nanoseconds_for(vm, &time_zone, *instant)));
+    // 5. Return 𝔽(? GetOffsetNanosecondsFor(timeZoneRec, instant)).
+    return Value(TRY(get_offset_nanoseconds_for(vm, time_zone_record, *instant)));
 }
 
-// 6.3.29 get Temporal.ZonedDateTime.prototype.offset, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.offset
+// 6.3.30 get Temporal.ZonedDateTime.prototype.offset, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.offset
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::offset_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let instant be ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
     auto* instant = MUST(create_temporal_instant(vm, zoned_date_time->nanoseconds()));
 
     // 4. Return ? BuiltinTimeZoneGetOffsetStringFor(zonedDateTime.[[TimeZone]], instant).
     auto offset_string = TRY(builtin_time_zone_get_offset_string_for(vm, &zoned_date_time->time_zone(), *instant));
-    return js_string(vm, move(offset_string));
+    return PrimitiveString::create(vm, move(offset_string));
 }
 
 // 15.6.10.2 get Temporal.ZonedDateTime.prototype.era, https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.era
@@ -677,7 +705,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::era_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -700,7 +728,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::era_year_getter)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -718,14 +746,14 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::era_year_getter)
     return TRY(calendar_era_year(vm, calendar, *plain_date_time));
 }
 
-// 6.3.30 Temporal.ZonedDateTime.prototype.with ( temporalZonedDateTimeLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.with
+// 6.3.31 Temporal.ZonedDateTime.prototype.with ( temporalZonedDateTimeLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.with
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
 {
     auto temporal_zoned_date_time_like = vm.argument(0);
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. If Type(temporalZonedDateTimeLike) is not Object, then
     if (!temporal_zoned_date_time_like.is_object()) {
@@ -743,7 +771,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     auto field_names = TRY(calendar_fields(vm, calendar, { "day"sv, "hour"sv, "microsecond"sv, "millisecond"sv, "minute"sv, "month"sv, "monthCode"sv, "nanosecond"sv, "second"sv, "year"sv }));
 
     // 7. Append "offset" to fieldNames.
-    field_names.append("offset"sv);
+    field_names.append("offset"_string);
 
     // 8. Let partialZonedDateTime be ? PrepareTemporalFields(temporalZonedDateTimeLike, fieldNames, partial).
     auto* partial_zoned_date_time = TRY(prepare_temporal_fields(vm, temporal_zoned_date_time_like.as_object(), field_names, PrepareTemporalFieldsPartial {}));
@@ -761,10 +789,10 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     auto& time_zone = zoned_date_time->time_zone();
 
     // 13. Append "timeZone" to fieldNames.
-    field_names.append("timeZone"sv);
+    field_names.append("timeZone"_string);
 
     // 14. Let fields be ? PrepareTemporalFields(zonedDateTime, fieldNames, « "timeZone", "offset" »).
-    auto* fields = TRY(prepare_temporal_fields(vm, *zoned_date_time, field_names, Vector<StringView> { "timeZone"sv, "offset"sv }));
+    auto* fields = TRY(prepare_temporal_fields(vm, zoned_date_time, field_names, Vector<StringView> { "timeZone"sv, "offset"sv }));
 
     // 15. Set fields to ? CalendarMergeFields(calendar, fields, partialZonedDateTime).
     fields = TRY(calendar_merge_fields(vm, calendar, *fields, *partial_zoned_date_time));
@@ -777,10 +805,10 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
 
     // 18. Assert: Type(offsetString) is String.
     VERIFY(offset_string_value.is_string());
-    auto const& offset_string = offset_string_value.as_string().string();
+    auto offset_string = offset_string_value.as_string().utf8_string();
 
     // 19. Let dateTimeResult be ? InterpretTemporalDateTimeFields(calendar, fields, options).
-    auto date_time_result = TRY(interpret_temporal_date_time_fields(vm, calendar, *fields, *options));
+    auto date_time_result = TRY(interpret_temporal_date_time_fields(vm, calendar, *fields, options));
 
     // 20. If IsTimeZoneOffsetString(offsetString) is false, throw a RangeError exception.
     if (!is_time_zone_offset_string(offset_string))
@@ -796,12 +824,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with)
     return MUST(create_temporal_zoned_date_time(vm, *epoch_nanoseconds, time_zone, calendar));
 }
 
-// 6.3.31 Temporal.ZonedDateTime.prototype.withPlainTime ( [ plainTimeLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withplaintime
+// 6.3.32 Temporal.ZonedDateTime.prototype.withPlainTime ( [ plainTimeLike ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withplaintime
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_plain_time)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     PlainTime* plain_time = nullptr;
 
@@ -838,12 +866,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_plain_time)
     return MUST(create_temporal_zoned_date_time(vm, instant->nanoseconds(), time_zone, calendar));
 }
 
-// 6.3.32 Temporal.ZonedDateTime.prototype.withPlainDate ( plainDateLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withplaindate
+// 6.3.33 Temporal.ZonedDateTime.prototype.withPlainDate ( plainDateLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withplaindate
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_plain_date)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let plainDate be ? ToTemporalDate(plainDateLike).
     auto* plain_date = TRY(to_temporal_date(vm, vm.argument(0)));
@@ -870,12 +898,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_plain_date)
     return MUST(create_temporal_zoned_date_time(vm, instant->nanoseconds(), time_zone, *calendar));
 }
 
-// 6.3.33 Temporal.ZonedDateTime.prototype.withTimeZone ( timeZoneLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withtimezone
+// 6.3.34 Temporal.ZonedDateTime.prototype.withTimeZone ( timeZoneLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withtimezone
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_time_zone)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be ? ToTemporalTimeZone(timeZoneLike).
     auto* time_zone = TRY(to_temporal_time_zone(vm, vm.argument(0)));
@@ -884,12 +912,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_time_zone)
     return MUST(create_temporal_zoned_date_time(vm, zoned_date_time->nanoseconds(), *time_zone, zoned_date_time->calendar()));
 }
 
-// 6.3.34 Temporal.ZonedDateTime.prototype.withCalendar ( calendarLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withcalendar
+// 6.3.35 Temporal.ZonedDateTime.prototype.withCalendar ( calendarLike ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.withcalendar
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_calendar)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let calendar be ? ToTemporalCalendar(calendarLike).
     auto* calendar = TRY(to_temporal_calendar(vm, vm.argument(0)));
@@ -898,7 +926,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::with_calendar)
     return MUST(create_temporal_zoned_date_time(vm, zoned_date_time->nanoseconds(), zoned_date_time->time_zone(), *calendar));
 }
 
-// 6.3.35 Temporal.ZonedDateTime.prototype.add ( temporalDurationLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.add
+// 6.3.36 Temporal.ZonedDateTime.prototype.add ( temporalDurationLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.add
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::add)
 {
     auto temporal_duration_like = vm.argument(0);
@@ -906,13 +934,13 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::add)
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? AddDurationToOrSubtractDurationFromZonedDateTime(add, zonedDateTime, temporalDurationLike, options).
-    return TRY(add_duration_to_or_subtract_duration_from_zoned_date_time(vm, ArithmeticOperation::Add, *zoned_date_time, temporal_duration_like, options));
+    return TRY(add_duration_to_or_subtract_duration_from_zoned_date_time(vm, ArithmeticOperation::Add, zoned_date_time, temporal_duration_like, options));
 }
 
-// 6.3.36 Temporal.ZonedDateTime.prototype.subtract ( temporalDurationLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.subtract
+// 6.3.37 Temporal.ZonedDateTime.prototype.subtract ( temporalDurationLike [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.subtract
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::subtract)
 {
     auto temporal_duration_like = vm.argument(0);
@@ -920,13 +948,13 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::subtract)
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? AddDurationToOrSubtractDurationFromZonedDateTime(subtract, zonedDateTime, temporalDurationLike, options).
-    return TRY(add_duration_to_or_subtract_duration_from_zoned_date_time(vm, ArithmeticOperation::Subtract, *zoned_date_time, temporal_duration_like, options));
+    return TRY(add_duration_to_or_subtract_duration_from_zoned_date_time(vm, ArithmeticOperation::Subtract, zoned_date_time, temporal_duration_like, options));
 }
 
-// 6.3.37 Temporal.ZonedDateTime.prototype.until ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.until
+// 6.3.38 Temporal.ZonedDateTime.prototype.until ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.until
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::until)
 {
     auto other = vm.argument(0);
@@ -934,13 +962,13 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::until)
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? DifferenceTemporalZonedDateTime(until, zonedDateTime, other, options).
-    return TRY(difference_temporal_zoned_date_time(vm, DifferenceOperation::Until, *zoned_date_time, other, options));
+    return TRY(difference_temporal_zoned_date_time(vm, DifferenceOperation::Until, zoned_date_time, other, options));
 }
 
-// 6.3.38 Temporal.ZonedDateTime.prototype.since ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.since
+// 6.3.39 Temporal.ZonedDateTime.prototype.since ( other [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.since
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::since)
 {
     auto other = vm.argument(0);
@@ -948,20 +976,20 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::since)
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? DifferenceTemporalZonedDateTime(since, zonedDateTime, other, options).
-    return TRY(difference_temporal_zoned_date_time(vm, DifferenceOperation::Since, *zoned_date_time, other, options));
+    return TRY(difference_temporal_zoned_date_time(vm, DifferenceOperation::Since, zoned_date_time, other, options));
 }
 
-// 6.3.39 Temporal.ZonedDateTime.prototype.round ( roundTo ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.round
+// 6.3.40 Temporal.ZonedDateTime.prototype.round ( roundTo ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.round
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::round)
 {
     auto& realm = *vm.current_realm();
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. If roundTo is undefined, then
     if (vm.argument(0).is_undefined()) {
@@ -993,64 +1021,84 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::round)
     // 7. Let roundingMode be ? ToTemporalRoundingMode(roundTo, "halfExpand").
     auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *round_to, "halfExpand"sv));
 
-    // 8. Let roundingIncrement be ? ToTemporalDateTimeRoundingIncrement(options, smallestUnit).
-    auto rounding_increment = TRY(to_temporal_date_time_rounding_increment(vm, *round_to, *smallest_unit));
+    // 8. If smallestUnit is "day", then
+    Optional<u16> maximum;
+    if (smallest_unit == "day"sv) {
+        // a. Let maximum be 1.
+        maximum = 1;
+    }
+    // 9. Else
+    else {
+        // a. Let maximum be ! MaximumTemporalDurationRoundingIncrement(smallestUnit)
+        maximum = maximum_temporal_duration_rounding_increment(*smallest_unit);
 
-    // 9. Let timeZone be zonedDateTime.[[TimeZone]].
+        // b. Assert: maximum is not undefined
+        VERIFY(maximum.has_value());
+    }
+
+    // 10. Let roundingIncrement be ? ToTemporalDateTimeRoundingIncrement(roundTo).
+    auto rounding_increment = TRY(to_temporal_rounding_increment(vm, *round_to));
+
+    // 11. Perform ? ValidateTemporalDateTimeRoundingIncrement(roundingIncrement, maximum, false).
+    TRY(validate_temporal_rounding_increment(vm, rounding_increment, *maximum, false));
+
+    // 12. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
 
-    // 10. Let instant be ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
+    auto time_zone_record = TRY(create_time_zone_methods_record(vm, NonnullGCPtr<Object> { time_zone }, { { TimeZoneMethod::GetOffsetNanosecondsFor } }));
+
+    // 13. Let instant be ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
     auto* instant = MUST(create_temporal_instant(vm, zoned_date_time->nanoseconds()));
 
-    // 11. Let calendar be zonedDateTime.[[Calendar]].
+    // 14. Let calendar be zonedDateTime.[[Calendar]].
     auto& calendar = zoned_date_time->calendar();
 
-    // 12. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
+    // 15. Let temporalDateTime be ? BuiltinTimeZoneGetPlainDateTimeFor(timeZone, instant, calendar).
     auto* temporal_date_time = TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, calendar));
 
-    // 13. Let isoCalendar be ! GetISO8601Calendar().
+    // 16. Let isoCalendar be ! GetISO8601Calendar().
     auto* iso_calendar = get_iso8601_calendar(vm);
 
-    // 14. Let dtStart be ? CreateTemporalDateTime(temporalDateTime.[[ISOYear]], temporalDateTime.[[ISOMonth]], temporalDateTime.[[ISODay]], 0, 0, 0, 0, 0, 0, isoCalendar).
+    // 17. Let dtStart be ? CreateTemporalDateTime(temporalDateTime.[[ISOYear]], temporalDateTime.[[ISOMonth]], temporalDateTime.[[ISODay]], 0, 0, 0, 0, 0, 0, isoCalendar).
     auto* dt_start = TRY(create_temporal_date_time(vm, temporal_date_time->iso_year(), temporal_date_time->iso_month(), temporal_date_time->iso_day(), 0, 0, 0, 0, 0, 0, *iso_calendar));
 
-    // 15. Let instantStart be ? BuiltinTimeZoneGetInstantFor(timeZone, dtStart, "compatible").
-    auto* instant_start = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *dt_start, "compatible"sv));
+    // 18. Let instantStart be ? BuiltinTimeZoneGetInstantFor(timeZone, dtStart, "compatible").
+    auto instant_start = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *dt_start, "compatible"sv));
 
-    // 16. Let startNs be instantStart.[[Nanoseconds]].
+    // 19. Let startNs be instantStart.[[Nanoseconds]].
     auto& start_ns = instant_start->nanoseconds();
 
-    // 17. Let endNs be ? AddZonedDateTime(startNs, timeZone, calendar, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0).
+    // 20. Let endNs be ? AddZonedDateTime(startNs, timeZone, calendar, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0).
     auto* end_ns = TRY(add_zoned_date_time(vm, start_ns, &time_zone, calendar, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0));
 
-    // 18. Let dayLengthNs be ℝ(endNs - startNs).
+    // 21. Let dayLengthNs be ℝ(endNs - startNs).
     auto day_length_ns = end_ns->big_integer().minus(start_ns.big_integer()).to_double();
 
-    // 19. If dayLengthNs ≤ 0, then
+    // 22. If dayLengthNs ≤ 0, then
     if (day_length_ns <= 0) {
         // a. Throw a RangeError exception.
         return vm.throw_completion<RangeError>(ErrorType::TemporalZonedDateTimeRoundZeroOrNegativeLengthDay);
     }
 
-    // 20. Let roundResult be ! RoundISODateTime(temporalDateTime.[[ISOYear]], temporalDateTime.[[ISOMonth]], temporalDateTime.[[ISODay]], temporalDateTime.[[ISOHour]], temporalDateTime.[[ISOMinute]], temporalDateTime.[[ISOSecond]], temporalDateTime.[[ISOMillisecond]], temporalDateTime.[[ISOMicrosecond]], temporalDateTime.[[ISONanosecond]], roundingIncrement, smallestUnit, roundingMode, dayLengthNs).
+    // 23. Let roundResult be ! RoundISODateTime(temporalDateTime.[[ISOYear]], temporalDateTime.[[ISOMonth]], temporalDateTime.[[ISODay]], temporalDateTime.[[ISOHour]], temporalDateTime.[[ISOMinute]], temporalDateTime.[[ISOSecond]], temporalDateTime.[[ISOMillisecond]], temporalDateTime.[[ISOMicrosecond]], temporalDateTime.[[ISONanosecond]], roundingIncrement, smallestUnit, roundingMode, dayLengthNs).
     auto round_result = round_iso_date_time(temporal_date_time->iso_year(), temporal_date_time->iso_month(), temporal_date_time->iso_day(), temporal_date_time->iso_hour(), temporal_date_time->iso_minute(), temporal_date_time->iso_second(), temporal_date_time->iso_millisecond(), temporal_date_time->iso_microsecond(), temporal_date_time->iso_nanosecond(), rounding_increment, *smallest_unit, rounding_mode, day_length_ns);
 
-    // 21. Let offsetNanoseconds be ? GetOffsetNanosecondsFor(timeZone, instant).
-    auto offset_nanoseconds = TRY(get_offset_nanoseconds_for(vm, &time_zone, *instant));
+    // 24. Let offsetNanoseconds be ? GetOffsetNanosecondsFor(timeZone, instant).
+    auto offset_nanoseconds = TRY(get_offset_nanoseconds_for(vm, time_zone_record, *instant));
 
-    // 22. Let epochNanoseconds be ? InterpretISODateTimeOffset(roundResult.[[Year]], roundResult.[[Month]], roundResult.[[Day]], roundResult.[[Hour]], roundResult.[[Minute]], roundResult.[[Second]], roundResult.[[Millisecond]], roundResult.[[Microsecond]], roundResult.[[Nanosecond]], option, offsetNanoseconds, timeZone, "compatible", "prefer", match exactly).
+    // 25. Let epochNanoseconds be ? InterpretISODateTimeOffset(roundResult.[[Year]], roundResult.[[Month]], roundResult.[[Day]], roundResult.[[Hour]], roundResult.[[Minute]], roundResult.[[Second]], roundResult.[[Millisecond]], roundResult.[[Microsecond]], roundResult.[[Nanosecond]], option, offsetNanoseconds, timeZone, "compatible", "prefer", match exactly).
     auto* epoch_nanoseconds = TRY(interpret_iso_date_time_offset(vm, round_result.year, round_result.month, round_result.day, round_result.hour, round_result.minute, round_result.second, round_result.millisecond, round_result.microsecond, round_result.nanosecond, OffsetBehavior::Option, offset_nanoseconds, &time_zone, "compatible"sv, "prefer"sv, MatchBehavior::MatchExactly));
 
-    // 23. Return ! CreateTemporalZonedDateTime(epochNanoseconds, timeZone, calendar).
+    // 26. Return ! CreateTemporalZonedDateTime(epochNanoseconds, timeZone, calendar).
     return MUST(create_temporal_zoned_date_time(vm, *epoch_nanoseconds, time_zone, calendar));
 }
 
-// 6.3.40 Temporal.ZonedDateTime.prototype.equals ( other ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.equals
+// 6.3.41 Temporal.ZonedDateTime.prototype.equals ( other ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.equals
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::equals)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Set other to ? ToTemporalZonedDateTime(other).
     auto* other = TRY(to_temporal_zoned_date_time(vm, vm.argument(0)));
@@ -1067,71 +1115,71 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::equals)
     return Value(TRY(calendar_equals(vm, zoned_date_time->calendar(), other->calendar())));
 }
 
-// 6.3.41 Temporal.ZonedDateTime.prototype.toString ( [ options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tostring
+// 6.3.42 Temporal.ZonedDateTime.prototype.toString ( [ options ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tostring
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_string)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Set options to ? GetOptionsObject(options).
     auto* options = TRY(get_options_object(vm, vm.argument(0)));
 
-    // 4. Let precision be ? ToSecondsStringPrecision(options).
-    auto precision = TRY(to_seconds_string_precision(vm, *options));
+    // 4. Let precision be ? ToSecondsStringPrecisionRecord(options).
+    auto precision = TRY(to_seconds_string_precision_record(vm, *options));
 
     // 5. Let roundingMode be ? ToTemporalRoundingMode(options, "trunc").
-    auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *options, "trunc"));
+    auto rounding_mode = TRY(to_temporal_rounding_mode(vm, *options, "trunc"sv));
 
-    // 6. Let showCalendar be ? ToShowCalendarOption(options).
-    auto show_calendar = TRY(to_show_calendar_option(vm, *options));
+    // 6. Let showCalendar be ? ToCalendarNameOption(options).
+    auto show_calendar = TRY(to_calendar_name_option(vm, *options));
 
-    // 7. Let showTimeZone be ? ToShowTimeZoneNameOption(options).
-    auto show_time_zone = TRY(to_show_time_zone_name_option(vm, *options));
+    // 7. Let showTimeZone be ? ToTimeZoneNameOption(options).
+    auto show_time_zone = TRY(to_time_zone_name_option(vm, *options));
 
     // 8. Let showOffset be ? ToShowOffsetOption(options).
     auto show_offset = TRY(to_show_offset_option(vm, *options));
 
     // 9. Return ? TemporalZonedDateTimeToString(zonedDateTime, precision.[[Precision]], showCalendar, showTimeZone, showOffset, precision.[[Increment]], precision.[[Unit]], roundingMode).
-    return js_string(vm, TRY(temporal_zoned_date_time_to_string(vm, *zoned_date_time, precision.precision, show_calendar, show_time_zone, show_offset, precision.increment, precision.unit, rounding_mode)));
+    return PrimitiveString::create(vm, TRY(temporal_zoned_date_time_to_string(vm, zoned_date_time, precision.precision, show_calendar, show_time_zone, show_offset, precision.increment, precision.unit, rounding_mode)));
 }
 
-// 6.3.42 Temporal.ZonedDateTime.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tolocalestring
+// 6.3.43 Temporal.ZonedDateTime.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tolocalestring
 // NOTE: This is the minimum toLocaleString implementation for engines without ECMA-402.
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_locale_string)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? TemporalZonedDateTimeToString(zonedDateTime, "auto", "auto", "auto", "auto").
-    return js_string(vm, TRY(temporal_zoned_date_time_to_string(vm, *zoned_date_time, "auto"sv, "auto"sv, "auto"sv, "auto"sv)));
+    return PrimitiveString::create(vm, TRY(temporal_zoned_date_time_to_string(vm, zoned_date_time, "auto"sv, "auto"sv, "auto"sv, "auto"sv)));
 }
 
-// 6.3.43 Temporal.ZonedDateTime.prototype.toJSON ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tojson
+// 6.3.44 Temporal.ZonedDateTime.prototype.toJSON ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tojson
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_json)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ? TemporalZonedDateTimeToString(zonedDateTime, "auto", "auto", "auto", "auto").
-    return js_string(vm, TRY(temporal_zoned_date_time_to_string(vm, *zoned_date_time, "auto"sv, "auto"sv, "auto"sv, "auto"sv)));
+    return PrimitiveString::create(vm, TRY(temporal_zoned_date_time_to_string(vm, zoned_date_time, "auto"sv, "auto"sv, "auto"sv, "auto"sv)));
 }
 
-// 6.3.44 Temporal.ZonedDateTime.prototype.valueOf ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.valueof
+// 6.3.45 Temporal.ZonedDateTime.prototype.valueOf ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.valueof
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::value_of)
 {
     // 1. Throw a TypeError exception.
     return vm.throw_completion<TypeError>(ErrorType::Convert, "Temporal.ZonedDateTime", "a primitive value");
 }
 
-// 6.3.45 Temporal.ZonedDateTime.prototype.startOfDay ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.startofday
+// 6.3.46 Temporal.ZonedDateTime.prototype.startOfDay ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.startofday
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::start_of_day)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1149,29 +1197,29 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::start_of_day)
     auto* start_date_time = TRY(create_temporal_date_time(vm, temporal_date_time->iso_year(), temporal_date_time->iso_month(), temporal_date_time->iso_day(), 0, 0, 0, 0, 0, 0, calendar));
 
     // 8. Let startInstant be ? BuiltinTimeZoneGetInstantFor(timeZone, startDateTime, "compatible").
-    auto* start_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *start_date_time, "compatible"sv));
+    auto start_instant = TRY(builtin_time_zone_get_instant_for(vm, &time_zone, *start_date_time, "compatible"sv));
 
     // 9. Return ! CreateTemporalZonedDateTime(startInstant.[[Nanoseconds]], timeZone, calendar).
     return MUST(create_temporal_zoned_date_time(vm, start_instant->nanoseconds(), time_zone, calendar));
 }
 
-// 6.3.46 Temporal.ZonedDateTime.prototype.toInstant ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toinstant
+// 6.3.47 Temporal.ZonedDateTime.prototype.toInstant ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toinstant
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_instant)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Return ! CreateTemporalInstant(zonedDateTime.[[Nanoseconds]]).
     return MUST(create_temporal_instant(vm, zoned_date_time->nanoseconds()));
 }
 
-// 6.3.47 Temporal.ZonedDateTime.prototype.toPlainDate ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaindate
+// 6.3.48 Temporal.ZonedDateTime.prototype.toPlainDate ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaindate
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_date)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1189,12 +1237,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_date)
     return MUST(create_temporal_date(vm, temporal_date_time->iso_year(), temporal_date_time->iso_month(), temporal_date_time->iso_day(), calendar));
 }
 
-// 6.3.48 Temporal.ZonedDateTime.prototype.toPlainTime ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaintime
+// 6.3.49 Temporal.ZonedDateTime.prototype.toPlainTime ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaintime
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_time)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1212,12 +1260,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_time)
     return MUST(create_temporal_time(vm, temporal_date_time->iso_hour(), temporal_date_time->iso_minute(), temporal_date_time->iso_second(), temporal_date_time->iso_millisecond(), temporal_date_time->iso_microsecond(), temporal_date_time->iso_nanosecond()));
 }
 
-// 6.3.49 Temporal.ZonedDateTime.prototype.toPlainDateTime ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaindatetime
+// 6.3.50 Temporal.ZonedDateTime.prototype.toPlainDateTime ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplaindatetime
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_date_time)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1229,12 +1277,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_date_time)
     return TRY(builtin_time_zone_get_plain_date_time_for(vm, &time_zone, *instant, zoned_date_time->calendar()));
 }
 
-// 6.3.50 Temporal.ZonedDateTime.prototype.toPlainYearMonth ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplainyearmonth
+// 6.3.51 Temporal.ZonedDateTime.prototype.toPlainYearMonth ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplainyearmonth
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_year_month)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1258,12 +1306,12 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_year_month)
     return TRY(calendar_year_month_from_fields(vm, calendar, *fields));
 }
 
-// 6.3.51 Temporal.ZonedDateTime.prototype.toPlainMonthDay ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplainmonthday
+// 6.3.52 Temporal.ZonedDateTime.prototype.toPlainMonthDay ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.toplainmonthday
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_month_day)
 {
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1287,17 +1335,17 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_plain_month_day)
     return TRY(calendar_month_day_from_fields(vm, calendar, *fields));
 }
 
-// 6.3.52 Temporal.ZonedDateTime.prototype.getISOFields ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.getisofields
+// 6.3.53 Temporal.ZonedDateTime.prototype.getISOFields ( ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.getisofields
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::get_iso_fields)
 {
     auto& realm = *vm.current_realm();
 
     // 1. Let zonedDateTime be the this value.
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
-    auto* zoned_date_time = TRY(typed_this_object(vm));
+    auto zoned_date_time = TRY(typed_this_object(vm));
 
     // 3. Let fields be OrdinaryObjectCreate(%Object.prototype%).
-    auto* fields = Object::create(realm, realm.intrinsics().object_prototype());
+    auto fields = Object::create(realm, realm.intrinsics().object_prototype());
 
     // 4. Let timeZone be zonedDateTime.[[TimeZone]].
     auto& time_zone = zoned_date_time->time_zone();
@@ -1345,13 +1393,26 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::get_iso_fields)
     MUST(fields->create_data_property_or_throw(vm.names.isoYear, Value(date_time->iso_year())));
 
     // 19. Perform ! CreateDataPropertyOrThrow(fields, "offset", offset).
-    MUST(fields->create_data_property_or_throw(vm.names.offset, js_string(vm, offset)));
+    MUST(fields->create_data_property_or_throw(vm.names.offset, PrimitiveString::create(vm, move(offset))));
 
     // 20. Perform ! CreateDataPropertyOrThrow(fields, "timeZone", timeZone).
     MUST(fields->create_data_property_or_throw(vm.names.timeZone, Value(&time_zone)));
 
     // 21. Return fields.
     return fields;
+}
+
+// 6.3.3 get Temporal.ZonedDateTime.prototype.calendarId
+// https://tc39.es/proposal-temporal/#sec-get-temporal.zoneddatetime.prototype.calendarid
+JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::calendar_id_getter)
+{
+    // 1. Let zonedDateTime be the this value.
+    // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
+    auto zoned_date_time = TRY(typed_this_object(vm));
+
+    // 3. Return zonedDateTime.[[Calendar]].identifier
+    auto& calendar = static_cast<Calendar&>(zoned_date_time->calendar());
+    return PrimitiveString::create(vm, calendar.identifier());
 }
 
 }

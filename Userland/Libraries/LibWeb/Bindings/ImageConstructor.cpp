@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/HTMLImageElementPrototype.h>
 #include <LibWeb/Bindings/ImageConstructor.h>
 #include <LibWeb/DOM/ElementFactory.h>
@@ -13,17 +14,19 @@
 
 namespace Web::Bindings {
 
+JS_DEFINE_ALLOCATOR(ImageConstructor);
+
 ImageConstructor::ImageConstructor(JS::Realm& realm)
-    : NativeFunction(*realm.intrinsics().function_prototype())
+    : NativeFunction(realm.intrinsics().function_prototype())
 {
 }
 
 void ImageConstructor::initialize(JS::Realm& realm)
 {
     auto& vm = this->vm();
+    Base::initialize(realm);
 
-    NativeFunction::initialize(realm);
-    define_direct_property(vm.names.prototype, &cached_web_prototype(realm, "HTMLImageElement"), 0);
+    define_direct_property(vm.names.prototype, &ensure_web_prototype<Bindings::HTMLImageElementPrototype>(realm, "HTMLImageElement"_fly_string), 0);
     define_direct_property(vm.names.length, JS::Value(0), JS::Attribute::Configurable);
 }
 
@@ -33,7 +36,7 @@ JS::ThrowCompletionOr<JS::Value> ImageConstructor::call()
 }
 
 // https://html.spec.whatwg.org/multipage/embedded-content.html#dom-image
-JS::ThrowCompletionOr<JS::Object*> ImageConstructor::construct(FunctionObject&)
+JS::ThrowCompletionOr<JS::NonnullGCPtr<JS::Object>> ImageConstructor::construct(FunctionObject&)
 {
     auto& vm = this->vm();
 
@@ -42,22 +45,22 @@ JS::ThrowCompletionOr<JS::Object*> ImageConstructor::construct(FunctionObject&)
     auto& document = window.associated_document();
 
     // 2. Let img be the result of creating an element given document, img, and the HTML namespace.
-    auto image_element = DOM::create_element(document, HTML::TagNames::img, Namespace::HTML);
+    auto image_element = TRY(Bindings::throw_dom_exception_if_needed(vm, [&]() { return DOM::create_element(document, HTML::TagNames::img, Namespace::HTML); }));
 
     // 3. If width is given, then set an attribute value for img using "width" and width.
     if (vm.argument_count() > 0) {
         u32 width = TRY(vm.argument(0).to_u32(vm));
-        image_element->set_attribute(HTML::AttributeNames::width, String::formatted("{}", width));
+        MUST(image_element->set_attribute(HTML::AttributeNames::width, MUST(String::formatted("{}", width))));
     }
 
     // 4. If height is given, then set an attribute value for img using "height" and height.
     if (vm.argument_count() > 1) {
         u32 height = TRY(vm.argument(1).to_u32(vm));
-        image_element->set_attribute(HTML::AttributeNames::height, String::formatted("{}", height));
+        MUST(image_element->set_attribute(HTML::AttributeNames::height, MUST(String::formatted("{}", height))));
     }
 
     // 5. Return img.
-    return image_element.ptr();
+    return image_element;
 }
 
 }

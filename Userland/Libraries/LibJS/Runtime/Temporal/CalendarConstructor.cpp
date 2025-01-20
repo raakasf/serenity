@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,15 +10,17 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(CalendarConstructor);
+
 // 12.2 The Temporal.Calendar Constructor, https://tc39.es/proposal-temporal/#sec-temporal-calendar-constructor
 CalendarConstructor::CalendarConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.Calendar.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.Calendar.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void CalendarConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -42,7 +44,7 @@ ThrowCompletionOr<Value> CalendarConstructor::call()
 }
 
 // 12.2.1 Temporal.Calendar ( id ), https://tc39.es/proposal-temporal/#sec-temporal.calendar
-ThrowCompletionOr<Object*> CalendarConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> CalendarConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
@@ -56,7 +58,7 @@ ThrowCompletionOr<Object*> CalendarConstructor::construct(FunctionObject& new_ta
     }
 
     // 4. Return ? CreateTemporalCalendar(id, NewTarget).
-    return TRY(create_temporal_calendar(vm, identifier, &new_target));
+    return *TRY(create_temporal_calendar(vm, identifier, &new_target));
 }
 
 // 12.3.2 Temporal.Calendar.from ( calendarLike ), https://tc39.es/proposal-temporal/#sec-temporal.calendar.from

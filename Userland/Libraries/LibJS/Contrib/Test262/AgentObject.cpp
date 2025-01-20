@@ -12,6 +12,8 @@
 
 namespace JS::Test262 {
 
+JS_DEFINE_ALLOCATOR(AgentObject);
+
 AgentObject::AgentObject(Realm& realm)
     : Object(Object::ConstructWithoutPrototypeTag::Tag, realm)
 {
@@ -31,8 +33,8 @@ void AgentObject::initialize(JS::Realm& realm)
 
 JS_DEFINE_NATIVE_FUNCTION(AgentObject::monotonic_now)
 {
-    auto time = Time::now_monotonic();
-    auto milliseconds = time.to_milliseconds();
+    auto time = MonotonicTime::now();
+    auto milliseconds = time.milliseconds();
     return Value(static_cast<double>(milliseconds));
 }
 

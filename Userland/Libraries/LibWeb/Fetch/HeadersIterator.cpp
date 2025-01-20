@@ -5,16 +5,29 @@
  */
 
 #include <LibJS/Runtime/Array.h>
-#include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/Iterator.h>
 #include <LibWeb/Bindings/HeadersIteratorPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Fetch/HeadersIterator.h>
 
+namespace Web::Bindings {
+
+template<>
+void Intrinsics::create_web_prototype_and_constructor<HeadersIteratorPrototype>(JS::Realm& realm)
+{
+    auto prototype = heap().allocate<HeadersIteratorPrototype>(realm, realm);
+    m_prototypes.set("HeadersIterator"_fly_string, prototype);
+}
+
+}
+
 namespace Web::Fetch {
+
+JS_DEFINE_ALLOCATOR(HeadersIterator);
 
 JS::NonnullGCPtr<HeadersIterator> HeadersIterator::create(Headers const& headers, JS::Object::PropertyKind iteration_kind)
 {
-    return *headers.heap().allocate<HeadersIterator>(headers.realm(), headers, iteration_kind);
+    return headers.heap().allocate<HeadersIterator>(headers.realm(), headers, iteration_kind);
 }
 
 HeadersIterator::HeadersIterator(Headers const& headers, JS::Object::PropertyKind iteration_kind)
@@ -22,42 +35,46 @@ HeadersIterator::HeadersIterator(Headers const& headers, JS::Object::PropertyKin
     , m_headers(headers)
     , m_iteration_kind(iteration_kind)
 {
-    set_prototype(&Bindings::ensure_web_prototype<Bindings::HeadersIteratorPrototype>(headers.realm(), "HeadersIterator"));
 }
 
 HeadersIterator::~HeadersIterator() = default;
 
+void HeadersIterator::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HeadersIterator);
+}
+
 void HeadersIterator::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_headers);
+    visitor.visit(m_headers);
 }
 
 // https://webidl.spec.whatwg.org/#es-iterable, Step 2
-JS::ThrowCompletionOr<JS::Object*> HeadersIterator::next()
+JS::NonnullGCPtr<JS::Object> HeadersIterator::next()
 {
     // The value pairs to iterate over are the return value of running sort and combine with this’s header list.
-    auto value_pairs_to_iterate_over = [&]() -> JS::ThrowCompletionOr<Vector<Fetch::Infrastructure::Header>> {
-        auto headers_or_error = m_headers.m_header_list->sort_and_combine();
-        if (headers_or_error.is_error())
-            return vm().throw_completion<JS::InternalError>(JS::ErrorType::NotEnoughMemoryToAllocate);
-        return headers_or_error.release_value();
+    auto value_pairs_to_iterate_over = [&]() {
+        return m_headers->m_header_list->sort_and_combine();
     };
 
-    auto pairs = TRY(value_pairs_to_iterate_over());
+    auto pairs = value_pairs_to_iterate_over();
 
     if (m_index >= pairs.size())
         return create_iterator_result_object(vm(), JS::js_undefined(), true);
 
     auto const& pair = pairs[m_index++];
+    StringView pair_name { pair.name };
+    StringView pair_value { pair.value };
 
     switch (m_iteration_kind) {
     case JS::Object::PropertyKind::Key:
-        return create_iterator_result_object(vm(), JS::js_string(vm(), StringView { pair.name }), false);
+        return create_iterator_result_object(vm(), JS::PrimitiveString::create(vm(), pair_name), false);
     case JS::Object::PropertyKind::Value:
-        return create_iterator_result_object(vm(), JS::js_string(vm(), StringView { pair.value }), false);
+        return create_iterator_result_object(vm(), JS::PrimitiveString::create(vm(), pair_value), false);
     case JS::Object::PropertyKind::KeyAndValue: {
-        auto* array = JS::Array::create_from(realm(), { JS::js_string(vm(), StringView { pair.name }), JS::js_string(vm(), StringView { pair.value }) });
+        auto array = JS::Array::create_from(realm(), { JS::PrimitiveString::create(vm(), pair_name), JS::PrimitiveString::create(vm(), pair_value) });
         return create_iterator_result_object(vm(), array, false);
     }
     default:

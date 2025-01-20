@@ -13,7 +13,12 @@
 
 namespace Kernel {
 
+#define REG_EECD 0x0010
 #define REG_EEPROM 0x0014
+
+// EECD Register
+
+#define EECD_PRES 0x100
 
 static bool is_valid_device_id(u16 device_id)
 {
@@ -181,35 +186,42 @@ static bool is_valid_device_id(u16 device_id)
     }
 }
 
-UNMAP_AFTER_INIT LockRefPtr<E1000ENetworkAdapter> E1000ENetworkAdapter::try_to_initialize(PCI::DeviceIdentifier const& pci_device_identifier)
+UNMAP_AFTER_INIT ErrorOr<bool> E1000ENetworkAdapter::probe(PCI::DeviceIdentifier const& pci_device_identifier)
 {
     if (pci_device_identifier.hardware_id().vendor_id != PCI::VendorID::Intel)
-        return {};
-    if (!is_valid_device_id(pci_device_identifier.hardware_id().device_id))
-        return {};
-    u8 irq = pci_device_identifier.interrupt_line().value();
-    // FIXME: Better propagate errors here
-    auto interface_name_or_error = NetworkingManagement::generate_interface_name_from_pci_address(pci_device_identifier);
-    if (interface_name_or_error.is_error())
-        return {};
-    auto registers_io_window = IOWindow::create_for_pci_device_bar(pci_device_identifier, PCI::HeaderType0BaseRegister::BAR0).release_value_but_fixme_should_propagate_errors();
-    auto adapter = adopt_lock_ref_if_nonnull(new (nothrow) E1000ENetworkAdapter(pci_device_identifier.address(), irq, move(registers_io_window), interface_name_or_error.release_value()));
-    if (!adapter)
-        return {};
-    if (adapter->initialize())
-        return adapter;
-    return {};
+        return false;
+    return is_valid_device_id(pci_device_identifier.hardware_id().device_id);
 }
 
-UNMAP_AFTER_INIT bool E1000ENetworkAdapter::initialize()
+UNMAP_AFTER_INIT ErrorOr<NonnullRefPtr<NetworkAdapter>> E1000ENetworkAdapter::create(PCI::DeviceIdentifier const& pci_device_identifier)
 {
-    dmesgln("E1000e: Found @ {}", pci_address());
-    enable_bus_mastering(pci_address());
+    u8 irq = pci_device_identifier.interrupt_line().value();
+    auto interface_name = TRY(NetworkingManagement::generate_interface_name_from_pci_address(pci_device_identifier));
+    auto registers_io_window = TRY(IOWindow::create_for_pci_device_bar(pci_device_identifier, PCI::HeaderType0BaseRegister::BAR0));
+
+    auto rx_buffer_region = TRY(MM.allocate_contiguous_kernel_region(rx_buffer_size * number_of_rx_descriptors, "E1000 RX buffers"sv, Memory::Region::Access::ReadWrite));
+    auto tx_buffer_region = MM.allocate_contiguous_kernel_region(tx_buffer_size * number_of_tx_descriptors, "E1000 TX buffers"sv, Memory::Region::Access::ReadWrite).release_value();
+    auto rx_descriptors_region = TRY(Memory::allocate_dma_region_as_typed_array<RxDescriptor volatile>(number_of_rx_descriptors, "E1000 RX Descriptors"sv, Memory::Region::Access::ReadWrite));
+    auto tx_descriptors_region = TRY(Memory::allocate_dma_region_as_typed_array<TxDescriptor volatile>(number_of_tx_descriptors, "E1000 TX Descriptors"sv, Memory::Region::Access::ReadWrite));
+
+    return TRY(adopt_nonnull_ref_or_enomem(new (nothrow) E1000ENetworkAdapter(interface_name.representable_view(),
+        pci_device_identifier,
+        irq, move(registers_io_window),
+        move(rx_buffer_region),
+        move(tx_buffer_region),
+        move(rx_descriptors_region),
+        move(tx_descriptors_region))));
+}
+
+UNMAP_AFTER_INIT ErrorOr<void> E1000ENetworkAdapter::initialize(Badge<NetworkingManagement>)
+{
+    dmesgln("E1000e: Found @ {}", device_identifier().address());
+    enable_bus_mastering(device_identifier());
 
     dmesgln("E1000e: IO base: {}", m_registers_io_window);
     dmesgln("E1000e: Interrupt line: {}", interrupt_number());
     detect_eeprom();
-    dmesgln("E1000e: Has EEPROM? {}", m_has_eeprom);
+    dmesgln("E1000e: Has EEPROM? {}", m_has_eeprom.was_set());
     read_mac_address();
     auto const& mac = mac_address();
     dmesgln("E1000e: MAC address: {}", mac.to_string());
@@ -219,11 +231,20 @@ UNMAP_AFTER_INIT bool E1000ENetworkAdapter::initialize()
 
     setup_link();
     setup_interrupts();
-    return true;
+    autoconfigure_link_local_ipv6();
+    return {};
 }
 
-UNMAP_AFTER_INIT E1000ENetworkAdapter::E1000ENetworkAdapter(PCI::Address address, u8 irq, NonnullOwnPtr<IOWindow> registers_io_window, NonnullOwnPtr<KString> interface_name)
-    : E1000NetworkAdapter(address, irq, move(registers_io_window), move(interface_name))
+UNMAP_AFTER_INIT E1000ENetworkAdapter::E1000ENetworkAdapter(StringView interface_name,
+    PCI::DeviceIdentifier const& device_identifier, u8 irq,
+    NonnullOwnPtr<IOWindow> registers_io_window, NonnullOwnPtr<Memory::Region> rx_buffer_region,
+    NonnullOwnPtr<Memory::Region> tx_buffer_region, Memory::TypedMapping<RxDescriptor volatile[]> rx_descriptors,
+    Memory::TypedMapping<TxDescriptor volatile[]> tx_descriptors)
+    : E1000NetworkAdapter(interface_name, device_identifier, irq, move(registers_io_window),
+          move(rx_buffer_region),
+          move(tx_buffer_region),
+          move(rx_descriptors),
+          move(tx_descriptors))
 {
 }
 
@@ -231,24 +252,19 @@ UNMAP_AFTER_INIT E1000ENetworkAdapter::~E1000ENetworkAdapter() = default;
 
 UNMAP_AFTER_INIT void E1000ENetworkAdapter::detect_eeprom()
 {
-    // FIXME: Try to find a way to detect if EEPROM exists instead of assuming it is
-    m_has_eeprom = true;
+    // Section 13.4.3 of https://www.intel.com/content/dam/doc/manual/pci-pci-x-family-gbe-controllers-software-dev-manual.pdf
+    if (in32(REG_EECD) & EECD_PRES)
+        m_has_eeprom.set();
 }
 
 UNMAP_AFTER_INIT u32 E1000ENetworkAdapter::read_eeprom(u8 address)
 {
-    VERIFY(m_has_eeprom);
+    VERIFY(m_has_eeprom.was_set());
     u16 data = 0;
     u32 tmp = 0;
-    if (m_has_eeprom) {
-        out32(REG_EEPROM, ((u32)address << 2) | 1);
-        while (!((tmp = in32(REG_EEPROM)) & (1 << 1)))
-            ;
-    } else {
-        out32(REG_EEPROM, ((u32)address << 2) | 1);
-        while (!((tmp = in32(REG_EEPROM)) & (1 << 1)))
-            ;
-    }
+    out32(REG_EEPROM, ((u32)address << 2) | 1);
+    while (!((tmp = in32(REG_EEPROM)) & (1 << 1)))
+        Processor::wait_check();
     data = (tmp >> 16) & 0xffff;
     return data;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,11 +10,12 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(NumberFormatFunction);
+
 // 15.5.2 Number Format Functions, https://tc39.es/ecma402/#sec-number-format-functions
-// 1.1.4 Number Format Functions, https://tc39.es/proposal-intl-numberformat-v3/out/numberformat/proposed.html#sec-number-format-functions
-NumberFormatFunction* NumberFormatFunction::create(Realm& realm, NumberFormat& number_format)
+NonnullGCPtr<NumberFormatFunction> NumberFormatFunction::create(Realm& realm, NumberFormat& number_format)
 {
-    return realm.heap().allocate<NumberFormatFunction>(realm, number_format, *realm.intrinsics().function_prototype());
+    return realm.heap().allocate<NumberFormatFunction>(realm, number_format, realm.intrinsics().function_prototype());
 }
 
 NumberFormatFunction::NumberFormatFunction(NumberFormat& number_format, Object& prototype)
@@ -29,7 +30,7 @@ void NumberFormatFunction::initialize(Realm& realm)
 
     Base::initialize(realm);
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
-    define_direct_property(vm.names.name, js_string(vm, String::empty()), Attribute::Configurable);
+    define_direct_property(vm.names.name, PrimitiveString::create(vm, String {}), Attribute::Configurable);
 }
 
 ThrowCompletionOr<Value> NumberFormatFunction::call()
@@ -45,15 +46,14 @@ ThrowCompletionOr<Value> NumberFormatFunction::call()
     auto mathematical_value = TRY(to_intl_mathematical_value(vm, value));
 
     // 5. Return ? FormatNumeric(nf, x).
-    // Note: Our implementation of FormatNumeric does not throw.
     auto formatted = format_numeric(vm, m_number_format, move(mathematical_value));
-    return js_string(vm, move(formatted));
+    return PrimitiveString::create(vm, move(formatted));
 }
 
 void NumberFormatFunction::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_number_format);
+    visitor.visit(m_number_format);
 }
 
 }

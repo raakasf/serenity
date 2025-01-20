@@ -12,13 +12,14 @@ namespace JS::Intl {
 
 class CollatorConstructor final : public NativeFunction {
     JS_OBJECT(CollatorConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(CollatorConstructor);
 
 public:
     virtual void initialize(Realm&) override;
     virtual ~CollatorConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
     explicit CollatorConstructor(Realm&);

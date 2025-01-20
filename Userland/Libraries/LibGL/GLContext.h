@@ -1,13 +1,15 @@
 /*
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
  * Copyright (c) 2021-2022, Jesse Buhagiar <jooster669@gmail.com>
- * Copyright (c) 2022, Jelle Raaijmakers <jelle@gmta.nl>
+ * Copyright (c) 2022-2024, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/ByteBuffer.h>
+#include <AK/Debug.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
@@ -15,7 +17,10 @@
 #include <AK/Tuple.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
-#include <LibGL/Tex/NameAllocator.h>
+#include <LibGL/Buffer/Buffer.h>
+#include <LibGL/NameAllocator.h>
+#include <LibGL/Shaders/Program.h>
+#include <LibGL/Shaders/Shader.h>
 #include <LibGL/Tex/Texture.h>
 #include <LibGL/Tex/TextureUnit.h>
 #include <LibGPU/Device.h>
@@ -101,21 +106,15 @@ public:
     GLContext(RefPtr<GPU::Driver> driver, NonnullOwnPtr<GPU::Device>, Gfx::Bitmap&);
     ~GLContext();
 
-    NonnullRefPtr<Gfx::Bitmap> frontbuffer() const { return m_frontbuffer; };
+    NonnullRefPtr<Gfx::Bitmap> frontbuffer() const { return m_frontbuffer; }
     void present();
-
-    // Used by WebGL to preserve the clear values when implicitly clearing the front buffer.
-    // FIXME: Add ContextParameters for these and expose them through methods such as gl_get_floatv instead of having a public API like this.
-    FloatVector4 current_clear_color() const { return m_clear_color; }
-    GLdouble current_clear_depth() const { return m_clear_depth; }
-    GLint current_clear_stencil() const { return m_clear_stencil; }
 
     void gl_begin(GLenum mode);
     void gl_clear(GLbitfield mask);
     void gl_clear_color(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
-    void gl_clear_depth(GLdouble depth);
+    void gl_clear_depth(GLfloat depth);
     void gl_clear_stencil(GLint s);
-    void gl_color(GLdouble r, GLdouble g, GLdouble b, GLdouble a);
+    void gl_color(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
     void gl_delete_textures(GLsizei n, GLuint const* textures);
     void gl_end();
     void gl_frustum(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLdouble near_val, GLdouble far_val);
@@ -130,9 +129,9 @@ public:
     void gl_pop_matrix();
     void gl_mult_matrix(FloatMatrix4x4 const& matrix);
     void gl_rotate(GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
-    void gl_scale(GLdouble x, GLdouble y, GLdouble z);
-    void gl_translate(GLdouble x, GLdouble y, GLdouble z);
-    void gl_vertex(GLdouble x, GLdouble y, GLdouble z, GLdouble w);
+    void gl_scale(GLfloat x, GLfloat y, GLfloat z);
+    void gl_translate(GLfloat x, GLfloat y, GLfloat z);
+    void gl_vertex(GLfloat x, GLfloat y, GLfloat z, GLfloat w);
     void gl_viewport(GLint x, GLint y, GLsizei width, GLsizei height);
     void gl_enable(GLenum);
     void gl_disable(GLenum);
@@ -149,6 +148,8 @@ public:
     GLboolean gl_is_list(GLuint list);
     void gl_flush();
     void gl_finish();
+    void gl_blend_color(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
+    void gl_blend_equation_separate(GLenum rgb_mode, GLenum alpha_mode);
     void gl_blend_func(GLenum src_factor, GLenum dst_factor);
     void gl_shade_model(GLenum mode);
     void gl_alpha_func(GLenum func, GLclampf ref);
@@ -162,7 +163,8 @@ public:
     void gl_tex_parameterfv(GLenum target, GLenum pname, GLfloat const* params);
     void gl_tex_coord(GLfloat s, GLfloat t, GLfloat r, GLfloat q);
     void gl_multi_tex_coord(GLenum target, GLfloat s, GLfloat t, GLfloat r, GLfloat q);
-    void gl_tex_env(GLenum target, GLenum pname, GLfloat param);
+    void gl_tex_env(GLenum target, GLenum pname, FloatVector4 params);
+    void gl_tex_envv(GLenum target, GLenum pname, void const* params, GLenum type);
     void gl_bind_texture(GLenum target, GLuint texture);
     GLboolean gl_is_texture(GLuint texture);
     void gl_active_texture(GLenum texture);
@@ -200,6 +202,7 @@ public:
     void gl_push_attrib(GLbitfield mask);
     void gl_pop_attrib();
     void gl_light_model(GLenum pname, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
+    void gl_light_modelv(GLenum pname, void const* params, GLenum type);
     void gl_bitmap(GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, GLubyte const* bitmap);
     void gl_copy_tex_image_2d(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border);
     void gl_get_tex_image(GLenum target, GLint level, GLenum format, GLenum type, void* pixels);
@@ -227,15 +230,29 @@ public:
     void gl_delete_buffers(GLsizei n, GLuint const* buffers);
     void gl_gen_buffers(GLsizei n, GLuint* buffers);
 
+    GLuint gl_create_shader(GLenum shader_type);
+    void gl_delete_shader(GLuint shader);
+    void gl_shader_source(GLuint shader, GLsizei count, GLchar const** string, GLint const* length);
+    void gl_compile_shader(GLuint shader);
+    void gl_get_shader(GLuint shader, GLenum pname, GLint* params);
+
+    GLuint gl_create_program();
+    void gl_delete_program(GLuint program);
+    void gl_attach_shader(GLuint program, GLuint shader);
+    void gl_link_program(GLuint program);
+    void gl_use_program(GLuint program);
+    void gl_get_program(GLuint program, GLenum pname, GLint* params);
+
 private:
+    void sync_clip_planes();
     void sync_device_config();
     void sync_device_sampler_config();
     void sync_device_texture_units();
     void sync_light_state();
+    void sync_matrices();
     void sync_stencil_configuration();
-    void sync_clip_planes();
 
-    void build_extension_string();
+    ErrorOr<ByteBuffer> build_extension_string();
 
     template<typename T>
     T* store_in_listing(T value)
@@ -284,10 +301,12 @@ private:
     Vector<FloatMatrix4x4> m_model_view_matrix_stack { FloatMatrix4x4::identity() };
     Vector<FloatMatrix4x4>* m_current_matrix_stack { &m_model_view_matrix_stack };
     FloatMatrix4x4* m_current_matrix { &m_current_matrix_stack->last() };
+    bool m_matrices_dirty { true };
 
     ALWAYS_INLINE void update_current_matrix(FloatMatrix4x4 const& new_matrix)
     {
         *m_current_matrix = new_matrix;
+        m_matrices_dirty = true;
 
         if (m_current_matrix_mode == GL_TEXTURE)
             m_texture_units_dirty = true;
@@ -316,8 +335,12 @@ private:
     GLenum m_culled_sides = GL_BACK;
 
     bool m_blend_enabled = false;
+    FloatVector4 m_blend_color { 0.f, 0.f, 0.f, 0.f };
     GLenum m_blend_source_factor = GL_ONE;
     GLenum m_blend_destination_factor = GL_ZERO;
+
+    GLenum m_blend_equation_rgb = GL_FUNC_ADD;
+    GLenum m_blend_equation_alpha = GL_FUNC_ADD;
 
     bool m_alpha_test_enabled = false;
     GLenum m_alpha_test_func = GL_ALWAYS;
@@ -373,7 +396,7 @@ private:
         return static_cast<T*>(default_texture.value());
     }
 
-    TextureNameAllocator m_name_allocator;
+    NameAllocator m_texture_name_allocator;
     HashMap<GLuint, RefPtr<Texture>> m_allocated_textures;
     HashMap<GLenum, RefPtr<Texture>> m_default_textures;
     Vector<TextureUnit> m_texture_units;
@@ -396,6 +419,12 @@ private:
 
     bool m_sampler_config_is_dirty { true };
     bool m_light_state_is_dirty { true };
+
+    NameAllocator m_shader_name_allocator;
+    NameAllocator m_program_name_allocator;
+    HashMap<GLuint, RefPtr<Shader>> m_allocated_shaders;
+    HashMap<GLuint, RefPtr<Program>> m_allocated_programs;
+    RefPtr<Program> m_current_program;
 
     struct Listing {
 
@@ -446,6 +475,8 @@ private:
             decltype(&GLContext::gl_cull_face),
             decltype(&GLContext::gl_call_list),
             decltype(&GLContext::gl_call_lists),
+            decltype(&GLContext::gl_blend_color),
+            decltype(&GLContext::gl_blend_equation_separate),
             decltype(&GLContext::gl_blend_func),
             decltype(&GLContext::gl_shade_model),
             decltype(&GLContext::gl_alpha_func),
@@ -470,6 +501,7 @@ private:
             decltype(&GLContext::gl_bitmap),
             decltype(&GLContext::gl_copy_tex_image_2d),
             decltype(&GLContext::gl_rect),
+            decltype(&GLContext::gl_tex_env),
             decltype(&GLContext::gl_tex_gen),
             decltype(&GLContext::gl_tex_gen_floatv),
             decltype(&GLContext::gl_fogf),
@@ -542,8 +574,44 @@ private:
     GLenum m_color_material_mode { GL_AMBIENT_AND_DIFFUSE };
 
     // GL Extension string
-    String m_extensions;
+    ByteBuffer m_extensions;
+
+    // Buffer objects
+    NameAllocator m_buffer_name_allocator;
+    HashMap<GLuint, RefPtr<Buffer>> m_allocated_buffers;
+    RefPtr<Buffer> m_array_buffer;
+    RefPtr<Buffer> m_element_array_buffer;
 };
+
+// Transposes input matrices (column-major) to our Matrix (row-major).
+template<typename I>
+constexpr FloatMatrix4x4 transpose_input_matrix(I const* matrix)
+{
+    Array<float, 16> elements;
+    for (size_t i = 0; i < 16; ++i)
+        elements[i] = static_cast<float>(matrix[i]);
+    // clang-format off
+    return {
+        elements[0], elements[4], elements[8], elements[12],
+        elements[1], elements[5], elements[9], elements[13],
+        elements[2], elements[6], elements[10], elements[14],
+        elements[3], elements[7], elements[11], elements[15],
+    };
+    // clang-format on
+}
+
+template<>
+constexpr FloatMatrix4x4 transpose_input_matrix(float const* matrix)
+{
+    // clang-format off
+    return {
+        matrix[0], matrix[4], matrix[8], matrix[12],
+        matrix[1], matrix[5], matrix[9], matrix[13],
+        matrix[2], matrix[6], matrix[10], matrix[14],
+        matrix[3], matrix[7], matrix[11], matrix[15],
+    };
+    // clang-format on
+}
 
 ErrorOr<NonnullOwnPtr<GLContext>> create_context(Gfx::Bitmap&);
 void make_context_current(GLContext*);

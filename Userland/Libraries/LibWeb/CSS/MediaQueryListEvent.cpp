@@ -10,7 +10,9 @@
 
 namespace Web::CSS {
 
-MediaQueryListEvent* MediaQueryListEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, MediaQueryListEventInit const& event_init)
+JS_DEFINE_ALLOCATOR(MediaQueryListEvent);
+
+JS::NonnullGCPtr<MediaQueryListEvent> MediaQueryListEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, MediaQueryListEventInit const& event_init)
 {
     return realm.heap().allocate<MediaQueryListEvent>(realm, realm, event_name, event_init);
 }
@@ -20,9 +22,14 @@ MediaQueryListEvent::MediaQueryListEvent(JS::Realm& realm, FlyString const& even
     , m_media(event_init.media)
     , m_matches(event_init.matches)
 {
-    set_prototype(&Bindings::ensure_web_prototype<Bindings::MediaQueryListEventPrototype>(realm, "MediaQueryListEvent"));
 }
 
 MediaQueryListEvent::~MediaQueryListEvent() = default;
+
+void MediaQueryListEvent::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(MediaQueryListEvent);
+}
 
 }

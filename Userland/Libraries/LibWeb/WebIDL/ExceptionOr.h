@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -29,24 +29,27 @@ enum class SimpleExceptionType {
 
 struct SimpleException {
     SimpleExceptionType type;
-    String message;
+    Variant<String, StringView> message;
 };
 
+using Exception = Variant<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion>;
+
 template<typename ValueType>
-class ExceptionOr {
+class [[nodiscard]] ExceptionOr {
 public:
-    ExceptionOr() requires(IsSame<ValueType, Empty>)
-        : m_result(Empty {})
+    ExceptionOr()
+    requires(IsSame<ValueType, Empty>)
+        : m_result_or_exception(Empty {})
     {
     }
 
     ExceptionOr(ValueType const& result)
-        : m_result(result)
+        : m_result_or_exception(result)
     {
     }
 
     ExceptionOr(ValueType&& result)
-        : m_result(move(result))
+        : m_result_or_exception(move(result))
     {
     }
 
@@ -54,32 +57,33 @@ public:
     // Most commonly: Value from Object* or similar, so we can omit the curly braces from "return { TRY(...) };".
     // Disabled for POD types to avoid weird conversion shenanigans.
     template<typename WrappedValueType>
-    ExceptionOr(WrappedValueType result) requires(!IsPOD<ValueType>)
-        : m_result(move(result))
+    ExceptionOr(WrappedValueType result)
+    requires(!IsPOD<ValueType>)
+        : m_result_or_exception(ValueType { move(result) })
     {
     }
 
     ExceptionOr(JS::NonnullGCPtr<DOMException> exception)
-        : m_exception(move(exception))
+        : m_result_or_exception(exception)
     {
     }
 
     ExceptionOr(SimpleException exception)
-        : m_exception(move(exception))
+        : m_result_or_exception(move(exception))
     {
     }
 
     ExceptionOr(JS::Completion exception)
-        : m_exception(move(exception))
+        : m_result_or_exception(move(exception))
     {
-        auto const& completion = m_exception.get<JS::Completion>();
+        auto const& completion = m_result_or_exception.template get<JS::Completion>();
         VERIFY(completion.is_error());
     }
 
-    ExceptionOr(Variant<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion> exception)
-        : m_exception(move(exception).template downcast<Empty, SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion>())
+    ExceptionOr(Exception exception)
+        : m_result_or_exception(move(exception))
     {
-        if (auto* completion = m_exception.template get_pointer<JS::Completion>())
+        if (auto* completion = m_result_or_exception.template get_pointer<JS::Completion>())
             VERIFY(completion->is_error());
     }
 
@@ -87,39 +91,44 @@ public:
     ExceptionOr(ExceptionOr const& other) = default;
     ~ExceptionOr() = default;
 
-    ValueType& value() requires(!IsSame<ValueType, Empty>)
+    ValueType& value()
+    requires(!IsSame<ValueType, Empty>)
     {
-        return m_result.value();
+        return m_result_or_exception.template get<ValueType>();
     }
 
     ValueType release_value()
     {
-        return m_result.release_value();
+        return move(m_result_or_exception.template get<ValueType>());
     }
 
-    Variant<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion> exception() const
+    Exception exception() const
     {
-        return m_exception.template downcast<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion>();
+        return m_result_or_exception.template downcast<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion>();
     }
 
     bool is_exception() const
     {
-        return !m_exception.template has<Empty>();
+        return !m_result_or_exception.template has<ValueType>();
+    }
+
+    ValueType release_value_but_fixme_should_propagate_errors()
+    {
+        VERIFY(!is_error());
+        return release_value();
     }
 
     // These are for compatibility with the TRY() macro in AK.
     [[nodiscard]] bool is_error() const { return is_exception(); }
-    Variant<SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion> release_error() { return exception(); }
+    Exception release_error() { return exception(); }
 
 private:
-    Optional<ValueType> m_result;
-
     // https://webidl.spec.whatwg.org/#idl-exceptions
-    Variant<Empty, SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion> m_exception {};
+    Variant<ValueType, SimpleException, JS::NonnullGCPtr<DOMException>, JS::Completion> m_result_or_exception;
 };
 
 template<>
-class ExceptionOr<void> : public ExceptionOr<Empty> {
+class [[nodiscard]] ExceptionOr<void> : public ExceptionOr<Empty> {
 public:
     using ExceptionOr<Empty>::ExceptionOr;
 };

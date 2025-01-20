@@ -5,22 +5,23 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MessageChannelPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/MessageChannel.h>
 #include <LibWeb/HTML/MessagePort.h>
 
 namespace Web::HTML {
 
-JS::NonnullGCPtr<MessageChannel> MessageChannel::construct_impl(JS::Realm& realm)
+JS_DEFINE_ALLOCATOR(MessageChannel);
+
+WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageChannel>> MessageChannel::construct_impl(JS::Realm& realm)
 {
-    return *realm.heap().allocate<MessageChannel>(realm, realm);
+    return realm.heap().allocate<MessageChannel>(realm, realm);
 }
 
 MessageChannel::MessageChannel(JS::Realm& realm)
     : PlatformObject(realm)
 {
-    set_prototype(&Bindings::cached_web_prototype(realm, "MessageChannel"));
-
     // 1. Set this's port 1 to a new MessagePort in this's relevant Realm.
     m_port1 = MessagePort::create(realm);
 
@@ -36,8 +37,14 @@ MessageChannel::~MessageChannel() = default;
 void MessageChannel::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(m_port1.ptr());
-    visitor.visit(m_port2.ptr());
+    visitor.visit(m_port1);
+    visitor.visit(m_port2);
+}
+
+void MessageChannel::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(MessageChannel);
 }
 
 MessagePort* MessageChannel::port1()

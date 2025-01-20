@@ -61,12 +61,15 @@ public:
     virtual void on_context_menu(Layer*, GUI::ContextMenuEvent&) { }
     virtual void on_tool_button_contextmenu(GUI::ContextMenuEvent&) { }
     virtual void on_second_paint(Layer const*, GUI::PaintEvent&) { }
-    virtual void on_keydown(GUI::KeyEvent&);
+    virtual bool on_keydown(GUI::KeyEvent&);
     virtual void on_keyup(GUI::KeyEvent&) { }
+    virtual void on_primary_color_change(Color) { }
+    virtual void on_secondary_color_change(Color) { }
     virtual void on_tool_activation() { }
-    virtual GUI::Widget* get_properties_widget() { return nullptr; }
-    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap>> cursor() { return Gfx::StandardCursor::None; }
-    virtual Gfx::IntPoint point_position_to_preferred_cell(Gfx::FloatPoint const& position) const { return position.to_type<int>(); }
+    virtual void on_tool_deactivation() { }
+    virtual NonnullRefPtr<GUI::Widget> get_properties_widget() { return GUI::Widget::construct(); }
+    virtual Variant<Gfx::StandardCursor, NonnullRefPtr<Gfx::Bitmap const>> cursor() { return Gfx::StandardCursor::None; }
+    virtual Gfx::IntPoint point_position_to_preferred_cell(Gfx::FloatPoint position) const { return position.to_type<int>(); }
 
     void clear() { m_editor = nullptr; }
     void setup(ImageEditor&);
@@ -80,7 +83,7 @@ public:
     virtual StringView tool_name() const = 0;
 
     // We only set the override_alt_key flag to true since the override is false by default. If false is desired do not call method.
-    virtual bool is_overriding_alt() { return false; };
+    virtual bool is_overriding_alt() { return false; }
 
 protected:
     Tool() = default;
@@ -89,13 +92,19 @@ protected:
 
     Gfx::IntPoint editor_layer_location(Layer const& layer) const;
 
-    virtual Gfx::IntPoint editor_stroke_position(Gfx::IntPoint const& pixel_coords, int stroke_thickness) const;
+    virtual Gfx::IntPoint editor_stroke_position(Gfx::IntPoint pixel_coords, int stroke_thickness) const;
 
-    void set_primary_slider(GUI::ValueSlider* primary) { m_primary_slider = primary; }
-    void set_secondary_slider(GUI::ValueSlider* secondary) { m_secondary_slider = secondary; }
+    void set_primary_slider(GUI::AbstractSlider* primary) { m_primary_slider = primary; }
+    void set_secondary_slider(GUI::AbstractSlider* secondary) { m_secondary_slider = secondary; }
 
-    GUI::ValueSlider* m_primary_slider { nullptr };
-    GUI::ValueSlider* m_secondary_slider { nullptr };
+    static Gfx::IntPoint constrain_line_angle(Gfx::IntPoint start_pos, Gfx::IntPoint end_pos, float angle_increment = M_PI / 8);
+
+    GUI::AbstractSlider* m_primary_slider { nullptr };
+    GUI::AbstractSlider* m_secondary_slider { nullptr };
+
+    template<Gfx::StorageFormat>
+    void set_pixel_with_possible_mask(int x, int y, Gfx::Color color, Gfx::Bitmap& bitmap);
+    void set_pixel_with_possible_mask(int x, int y, Gfx::Color color, Gfx::Bitmap& bitmap);
 };
 
 }

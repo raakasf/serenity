@@ -54,6 +54,13 @@ enum class SplitBehavior : unsigned {
 };
 AK_ENUM_BITWISE_OPERATORS(SplitBehavior);
 
+enum class TrailingCodePointTransformation : u8 {
+    // Default behaviour; Puts the first typographic letter unit of each word, if lowercase, in titlecase; the other characters in lowercase.
+    Lowercase,
+    // Puts the first typographic letter unit of each word, if lowercase, in titlecase; other characters are unaffected. (https://drafts.csswg.org/css-text/#valdef-text-transform-capitalize)
+    PreserveExisting,
+};
+
 struct MaskSpan {
     size_t start;
     size_t length;
@@ -61,10 +68,6 @@ struct MaskSpan {
     bool operator==(MaskSpan const& other) const
     {
         return start == other.start && length == other.length;
-    }
-    bool operator!=(MaskSpan const& other) const
-    {
-        return !(*this == other);
     }
 };
 
@@ -83,7 +86,7 @@ Optional<T> convert_to_uint_from_octal(StringView, TrimWhitespace = TrimWhitespa
 template<typename T>
 Optional<T> convert_to_floating_point(StringView, TrimWhitespace = TrimWhitespace::Yes);
 #endif
-bool equals_ignoring_case(StringView, StringView);
+bool equals_ignoring_ascii_case(StringView, StringView);
 bool ends_with(StringView a, StringView b, CaseSensitivity);
 bool starts_with(StringView, StringView, CaseSensitivity);
 bool contains(StringView, StringView, CaseSensitivity);
@@ -94,6 +97,7 @@ StringView trim_whitespace(StringView string, TrimMode mode);
 Optional<size_t> find(StringView haystack, char needle, size_t start = 0);
 Optional<size_t> find(StringView haystack, StringView needle, size_t start = 0);
 Optional<size_t> find_last(StringView haystack, char needle);
+Optional<size_t> find_last(StringView haystack, StringView needle);
 Optional<size_t> find_last_not(StringView haystack, char needle);
 Vector<size_t> find_all(StringView haystack, StringView needle);
 enum class SearchDirection {
@@ -102,19 +106,25 @@ enum class SearchDirection {
 };
 Optional<size_t> find_any_of(StringView haystack, StringView needles, SearchDirection);
 
-String to_snakecase(StringView);
-String to_titlecase(StringView);
-String invert_case(StringView);
+ByteString to_snakecase(StringView);
+ByteString to_titlecase(StringView);
+ByteString invert_case(StringView);
 
-String replace(StringView, StringView needle, StringView replacement, ReplaceMode);
+ByteString replace(StringView, StringView needle, StringView replacement, ReplaceMode);
+ErrorOr<String> replace(String const&, StringView needle, StringView replacement, ReplaceMode);
+
 size_t count(StringView, StringView needle);
+size_t count(StringView, char needle);
 
 }
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::CaseSensitivity;
 using AK::ReplaceMode;
 using AK::SplitBehavior;
+using AK::TrailingCodePointTransformation;
 using AK::TrimMode;
 using AK::TrimWhitespace;
+#endif

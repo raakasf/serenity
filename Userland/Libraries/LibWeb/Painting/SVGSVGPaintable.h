@@ -11,12 +11,15 @@
 
 namespace Web::Painting {
 
-class SVGSVGPaintable : public PaintableBox {
-public:
-    static NonnullRefPtr<SVGSVGPaintable> create(Layout::SVGSVGBox const&);
+class SVGSVGPaintable final : public PaintableBox {
+    JS_CELL(SVGSVGPaintable, PaintableBox);
+    JS_DECLARE_ALLOCATOR(SVGSVGPaintable);
 
-    virtual void before_children_paint(PaintContext&, PaintPhase, ShouldClipOverflow) const override;
-    virtual void after_children_paint(PaintContext&, PaintPhase, ShouldClipOverflow) const override;
+public:
+    static JS::NonnullGCPtr<SVGSVGPaintable> create(Layout::SVGSVGBox const&);
+
+    virtual void before_children_paint(PaintContext&, PaintPhase) const override;
+    virtual void after_children_paint(PaintContext&, PaintPhase) const override;
 
     Layout::SVGSVGBox const& layout_box() const;
 

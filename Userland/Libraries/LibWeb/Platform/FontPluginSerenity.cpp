@@ -5,13 +5,16 @@
  */
 
 #include "FontPluginSerenity.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibGfx/Font/FontDatabase.h>
 
 namespace Web::Platform {
 
 FontPluginSerenity::FontPluginSerenity()
 {
+    // NOTE: These will eventually get replaced by system defaults.
+    Gfx::FontDatabase::set_default_font_query("Katica 10 400 0");
+    Gfx::FontDatabase::set_fixed_width_font_query("Csilla 10 400 0");
 }
 
 FontPluginSerenity::~FontPluginSerenity() = default;
@@ -26,25 +29,23 @@ Gfx::Font& FontPluginSerenity::default_fixed_width_font()
     return Gfx::FontDatabase::default_fixed_width_font();
 }
 
-String FontPluginSerenity::generic_font_name(GenericFont generic_font)
+FlyString FontPluginSerenity::generic_font_name(GenericFont generic_font)
 {
-    // FIXME: Replace hard-coded font names with a relevant call to FontDatabase.
-    // Currently, we cannot request the default font's name, or request it at a specific size and weight.
-    // So, hard-coded font names it is.
+    // FIXME: Make these configurable at the browser settings level. Fall back to system defaults.
     switch (generic_font) {
     case GenericFont::SansSerif:
     case GenericFont::UiSansSerif:
     case GenericFont::Cursive:
     case GenericFont::UiRounded:
-        return "Katica";
+        return default_font().family();
     case GenericFont::Monospace:
     case GenericFont::UiMonospace:
-        return "Csilla";
+        return default_fixed_width_font().family();
     case GenericFont::Serif:
     case GenericFont::UiSerif:
-        return "Roman";
+        return "Roman"_fly_string;
     case GenericFont::Fantasy:
-        return "Comic Book";
+        return "Comic Book"_fly_string;
     case GenericFont::__Count:
         VERIFY_NOT_REACHED();
     }

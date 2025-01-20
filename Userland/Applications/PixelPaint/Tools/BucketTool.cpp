@@ -24,10 +24,10 @@ namespace PixelPaint {
 
 BucketTool::BucketTool()
 {
-    m_cursor = Gfx::Bitmap::try_load_from_file("/res/icons/pixelpaint/bucket.png"sv).release_value_but_fixme_should_propagate_errors();
+    m_cursor = NonnullRefPtr<Gfx::Bitmap const> { Gfx::Bitmap::load_from_file("/res/icons/pixelpaint/bucket.png"sv).release_value_but_fixme_should_propagate_errors() };
 }
 
-static void flood_fill(Gfx::Bitmap& bitmap, Gfx::IntPoint const& start_position, Color fill_color, int threshold)
+static void flood_fill(Gfx::Bitmap& bitmap, Gfx::IntPoint start_position, Color fill_color, int threshold)
 {
     VERIFY(bitmap.bpp() == 32);
 
@@ -50,6 +50,9 @@ void BucketTool::on_mousedown(Layer* layer, MouseEvent& event)
     if (!layer->rect().contains(layer_event.position()))
         return;
 
+    if (auto selection = layer->image().selection(); !selection.is_empty() && !selection.is_selected(event.image_event().position()))
+        return;
+
     GUI::Painter painter(layer->get_scratch_edited_bitmap());
 
     flood_fill(layer->get_scratch_edited_bitmap(), layer_event.position(), m_editor->color_for(layer_event), m_threshold);
@@ -58,31 +61,32 @@ void BucketTool::on_mousedown(Layer* layer, MouseEvent& event)
     m_editor->did_complete_action(tool_name());
 }
 
-GUI::Widget* BucketTool::get_properties_widget()
+NonnullRefPtr<GUI::Widget> BucketTool::get_properties_widget()
 {
     if (!m_properties_widget) {
-        m_properties_widget = GUI::Widget::construct();
-        m_properties_widget->set_layout<GUI::VerticalBoxLayout>();
+        auto properties_widget = GUI::Widget::construct();
+        properties_widget->set_layout<GUI::VerticalBoxLayout>();
 
-        auto& threshold_container = m_properties_widget->add<GUI::Widget>();
+        auto& threshold_container = properties_widget->add<GUI::Widget>();
         threshold_container.set_fixed_height(20);
         threshold_container.set_layout<GUI::HorizontalBoxLayout>();
 
-        auto& threshold_label = threshold_container.add<GUI::Label>("Threshold:");
+        auto& threshold_label = threshold_container.add<GUI::Label>("Threshold:"_string);
         threshold_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
         threshold_label.set_fixed_size(80, 20);
 
-        auto& threshold_slider = threshold_container.add<GUI::ValueSlider>(Orientation::Horizontal, "%");
+        auto& threshold_slider = threshold_container.add<GUI::ValueSlider>(Orientation::Horizontal, "%"_string);
         threshold_slider.set_range(0, 100);
         threshold_slider.set_value(m_threshold);
 
-        threshold_slider.on_change = [&](int value) {
+        threshold_slider.on_change = [this](int value) {
             m_threshold = value;
         };
         set_primary_slider(&threshold_slider);
+        m_properties_widget = properties_widget;
     }
 
-    return m_properties_widget.ptr();
+    return *m_properties_widget;
 }
 
 }

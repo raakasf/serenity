@@ -9,6 +9,7 @@
 
 #include "TrackManager.h"
 #include "Music.h"
+#include <AK/NoAllocationGuard.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/TypedTransfer.h>
 #include <LibDSP/Effects.h>
@@ -35,6 +36,7 @@ void TrackManager::time_forward(int amount)
 
 void TrackManager::fill_buffer(FixedArray<DSP::Sample>& buffer)
 {
+    NoAllocationGuard guard;
     VERIFY(buffer.size() == m_temporary_track_buffer.size());
     size_t sample_count = buffer.size();
     // No need to zero the temp buffer as the track overwrites it anyways.
@@ -72,6 +74,5 @@ int TrackManager::next_track_index() const
     auto next_track_index = m_current_track + 1;
     if (next_track_index >= m_tracks.size())
         return 0;
-    else
-        return next_track_index;
+    return static_cast<int>(next_track_index);
 }

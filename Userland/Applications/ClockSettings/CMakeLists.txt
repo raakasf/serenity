@@ -4,8 +4,8 @@ serenity_component(
     TARGETS ClockSettings
 )
 
-compile_gml(ClockSettingsWidget.gml ClockSettingsWidgetGML.h clock_settings_widget_gml)
-compile_gml(TimeZoneSettingsWidget.gml TimeZoneSettingsWidgetGML.h time_zone_settings_widget_gml)
+stringify_gml(ClockSettingsWidget.gml ClockSettingsWidgetGML.h clock_settings_widget_gml)
+stringify_gml(TimeZoneSettingsWidget.gml TimeZoneSettingsWidgetGML.h time_zone_settings_widget_gml)
 
 set(SOURCES
     main.cpp
@@ -19,5 +19,4 @@ set(GENERATED_SOURCES
 )
 
 serenity_app(ClockSettings ICON app-analog-clock) # FIXME: Create a ClockSettings icon.
-target_link_libraries(ClockSettings LibGUI LibMain LibLocale)
-link_with_locale_data(ClockSettings)
+target_link_libraries(ClockSettings PRIVATE LibConfig LibCore LibGfx LibGUI LibMain LibLocale)

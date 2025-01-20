@@ -19,10 +19,11 @@ struct UIEventInit : public DOM::EventInit {
 
 class UIEvent : public DOM::Event {
     WEB_PLATFORM_OBJECT(UIEvent, DOM::Event);
+    JS_DECLARE_ALLOCATOR(UIEvent);
 
 public:
-    static UIEvent* create(JS::Realm&, FlyString const& type);
-    static UIEvent* construct_impl(JS::Realm&, FlyString const& event_name, UIEventInit const& event_init);
+    [[nodiscard]] static JS::NonnullGCPtr<UIEvent> create(JS::Realm&, FlyString const& type);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<UIEvent>> construct_impl(JS::Realm&, FlyString const& event_name, UIEventInit const& event_init);
 
     virtual ~UIEvent() override;
 
@@ -32,7 +33,16 @@ public:
 
     void init_ui_event(String const& type, bool bubbles, bool cancelable, HTML::Window* view, int detail)
     {
-        init_event(type, bubbles, cancelable);
+        // Initializes attributes of an UIEvent object. This method has the same behavior as initEvent().
+
+        // 1. If this’s dispatch flag is set, then return.
+        if (dispatched())
+            return;
+
+        // 2. Initialize this with type, bubbles, and cancelable.
+        initialize_event(type, bubbles, cancelable);
+
+        // Implementation Defined: Initialise other values.
         m_view = view;
         m_detail = detail;
     }
@@ -41,6 +51,7 @@ protected:
     UIEvent(JS::Realm&, FlyString const& event_name);
     UIEvent(JS::Realm&, FlyString const& event_name, UIEventInit const& event_init);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     JS::GCPtr<HTML::Window> m_view;

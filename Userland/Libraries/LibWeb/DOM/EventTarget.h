@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/Noncopyable.h>
 #include <AK/Vector.h>
 #include <LibJS/Forward.h>
@@ -20,9 +19,12 @@ namespace Web::DOM {
 
 class EventTarget : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(EventTarget, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(EventTarget);
 
 public:
     virtual ~EventTarget() override;
+
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<EventTarget>> construct_impl(JS::Realm&);
 
     virtual bool is_focusable() const { return false; }
 
@@ -44,7 +46,8 @@ public:
 
     Vector<JS::Handle<DOMEventListener>> event_listener_list();
 
-    Function<void(Event const&)> activation_behavior;
+    virtual bool has_activation_behavior() const;
+    virtual void activation_behavior(Event const&);
 
     // NOTE: These only exist for checkbox and radio input elements.
     virtual void legacy_pre_activation_behavior() { }
@@ -55,20 +58,27 @@ public:
     void set_event_handler_attribute(FlyString const& name, WebIDL::CallbackType*);
 
     bool has_event_listener(FlyString const& type) const;
+    bool has_event_listeners() const;
 
 protected:
-    explicit EventTarget(JS::Realm&);
+    explicit EventTarget(JS::Realm&, MayInterfereWithIndexedPropertyAccess = MayInterfereWithIndexedPropertyAccess::No);
 
-    void element_event_handler_attribute_changed(FlyString const& local_name, String const& value);
+    void element_event_handler_attribute_changed(FlyString const& local_name, Optional<String> const& value);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
-    Vector<JS::NonnullGCPtr<DOMEventListener>> m_event_listener_list;
+    struct Data {
+        Vector<JS::NonnullGCPtr<DOMEventListener>> event_listener_list;
 
-    // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-map
-    // Spec Note: The order of the entries of event handler map could be arbitrary. It is not observable through any algorithms that operate on the map.
-    HashMap<FlyString, JS::GCPtr<HTML::EventHandler>> m_event_handler_map;
+        // https://html.spec.whatwg.org/multipage/webappapis.html#event-handler-map
+        // Spec Note: The order of the entries of event handler map could be arbitrary. It is not observable through any algorithms that operate on the map.
+        HashMap<FlyString, JS::NonnullGCPtr<HTML::EventHandler>> event_handler_map;
+    };
+
+    Data& ensure_data();
+    OwnPtr<Data> m_data;
 
     WebIDL::CallbackType* get_current_value_of_event_handler(FlyString const& name);
     void activate_event_handler(FlyString const& name, HTML::EventHandler& event_handler);

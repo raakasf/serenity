@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/TypeCasts.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -21,9 +22,11 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(PlainTime);
+
 // 4 Temporal.PlainTime Objects, https://tc39.es/proposal-temporal/#sec-temporal-plaintime-objects
 PlainTime::PlainTime(u8 iso_hour, u8 iso_minute, u8 iso_second, u16 iso_millisecond, u16 iso_microsecond, u16 iso_nanosecond, Calendar& calendar, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_iso_hour(iso_hour)
     , m_iso_minute(iso_minute)
     , m_iso_second(iso_second)
@@ -37,7 +40,7 @@ PlainTime::PlainTime(u8 iso_hour, u8 iso_minute, u8 iso_second, u16 iso_millisec
 void PlainTime::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_calendar);
+    visitor.visit(m_calendar);
 }
 
 // 4.5.1 DifferenceTime ( h1, min1, s1, ms1, mus1, ns1, h2, min2, s2, ms2, mus2, ns2 ), https://tc39.es/proposal-temporal/#sec-temporal-differencetime
@@ -330,10 +333,10 @@ ThrowCompletionOr<PlainTime*> create_temporal_time(VM& vm, u8 hour, u8 minute, u
     // 9. Set object.[[ISOMicrosecond]] to microsecond.
     // 10. Set object.[[ISONanosecond]] to nanosecond.
     // 11. Set object.[[Calendar]] to ! GetISO8601Calendar().
-    auto* object = TRY(ordinary_create_from_constructor<PlainTime>(vm, *new_target, &Intrinsics::temporal_plain_time_prototype, hour, minute, second, millisecond, microsecond, nanosecond, *get_iso8601_calendar(vm)));
+    auto object = TRY(ordinary_create_from_constructor<PlainTime>(vm, *new_target, &Intrinsics::temporal_plain_time_prototype, hour, minute, second, millisecond, microsecond, nanosecond, *get_iso8601_calendar(vm)));
 
     // 12. Return object.
-    return object;
+    return object.ptr();
 }
 
 // 4.5.8 ToTemporalTimeRecord ( temporalTimeLike [ , completeness ] ), https://tc39.es/proposal-temporal/#sec-temporal-totemporaltimerecord
@@ -342,40 +345,105 @@ ThrowCompletionOr<TemporalTimeLikeRecord> to_temporal_time_record(VM& vm, Object
     // 1. If completeness is not present, set completeness to complete.
 
     // 2. Let partial be ? PrepareTemporalFields(temporalTimeLike, « "hour", "microsecond", "millisecond", "minute", "nanosecond", "second" », partial).
-    auto* partial = TRY(prepare_temporal_fields(vm, temporal_time_like, { "hour"sv, "microsecond"sv, "millisecond"sv, "minute"sv, "nanosecond"sv, "second"sv }, PrepareTemporalFieldsPartial {}));
+    auto* partial = TRY(prepare_temporal_fields(vm, temporal_time_like,
+        { "hour"_string,
+            "microsecond"_string,
+            "millisecond"_string,
+            "minute"_string,
+            "nanosecond"_string,
+            "second"_string },
+        PrepareTemporalFieldsPartial {}));
 
-    // 3. Let result be a new TemporalTimeLike Record with each field set to undefined.
-    auto result = TemporalTimeLikeRecord {};
-
-    // 4. For each row of Table 4, except the header row, in table order, do
-    for (auto& [field, property_name] : temporal_time_like_record_fields<TemporalTimeLikeRecord, Optional<double>>(vm)) {
-        // a. Let field be the Field Name value of the current row.
-        // b. Let propertyName be the Property Name value of the current row.
-
-        // c. Let valueDesc be OrdinaryGetOwnProperty(partial, propertyName).
-        auto value_descriptor = MUST(partial->Object::internal_get_own_property(property_name));
-
-        // d. If valueDesc is not undefined, then
-        if (value_descriptor.has_value()) {
-            // i. Assert: valueDesc is a data Property Descriptor.
-            VERIFY(value_descriptor->is_data_descriptor());
-
-            // ii. Set the field of result whose name is field to ℝ(valueDesc.[[Value]]).
-            result.*field = value_descriptor->value->as_double();
-        }
-        // e. Else if completeness is complete, then
-        else if (completeness == ToTemporalTimeRecordCompleteness::Complete) {
-            // i. Set the field of result whose name is field to 0.
-            result.*field = 0;
-        }
+    TemporalTimeLikeRecord result;
+    // 3. If completeness is complete, then
+    if (completeness == ToTemporalTimeRecordCompleteness::Complete) {
+        // a. Let result be a new TemporalTimeLike Record with each field set to 0.
+        result = TemporalTimeLikeRecord { 0, 0, 0, 0, 0, 0 };
+    }
+    // 4. Else,
+    else {
+        // a. Let result be a new TemporalTimeLike Record with each field set to undefined.
+        result = TemporalTimeLikeRecord {};
     }
 
-    // 6. Return result.
+    // 5. Let hourDesc be OrdinaryGetOwnProperty(partial, "hour").
+    auto hour_desc = MUST(partial->Object::internal_get_own_property(vm.names.hour));
+
+    // 6. If hourDesc is not undefined, then
+    if (hour_desc.has_value()) {
+        // a. Assert: hourDesc is a data Property Descriptor.
+        VERIFY(hour_desc->is_data_descriptor());
+
+        // b. Set result.[[Hour]] to ℝ(hourDesc.[[Value]]).
+        result.hour = hour_desc->value->as_double();
+    }
+
+    // 7. Let minuteDesc be OrdinaryGetOwnProperty(partial, "minute").
+    auto minute_desc = MUST(partial->Object::internal_get_own_property(vm.names.minute));
+
+    // 8. If minuteDesc is not undefined, then
+    if (minute_desc.has_value()) {
+        // a. Assert: minuteDesc is a data Property Descriptor.
+        VERIFY(minute_desc->is_data_descriptor());
+
+        // b. Set result.[[Minute]] to ℝ(minuteDesc.[[Value]]).
+        result.minute = minute_desc->value->as_double();
+    }
+
+    // 9. Let secondDesc be OrdinaryGetOwnProperty(partial, "second").
+    auto second_desc = MUST(partial->Object::internal_get_own_property(vm.names.second));
+
+    // 10. If secondDesc is not undefined, then
+    if (second_desc.has_value()) {
+        // a. Assert: secondDesc is a data Property Descriptor.
+        VERIFY(second_desc->is_data_descriptor());
+
+        // b. Set result.[[Second]] to ℝ(secondDesc.[[Value]]).
+        result.second = second_desc->value->as_double();
+    }
+
+    // 11. Let millisecondDesc be OrdinaryGetOwnProperty(partial, "millisecond").
+    auto millisecond_desc = MUST(partial->Object::internal_get_own_property(vm.names.millisecond));
+
+    // 12. If millisecondDesc is not undefined, then
+    if (millisecond_desc.has_value()) {
+        // a. Assert: millisecondDesc is a data Property Descriptor.
+        VERIFY(millisecond_desc->is_data_descriptor());
+
+        // b. Set result.[[Millisecond]] to ℝ(millisecondDesc.[[Value]]).
+        result.millisecond = millisecond_desc->value->as_double();
+    }
+
+    // 13. Let microsecondDesc be OrdinaryGetOwnProperty(partial, "microsecond").
+    auto microsecond_desc = MUST(partial->Object::internal_get_own_property(vm.names.microsecond));
+
+    // 14. If microsecondDesc is not undefined, then
+    if (microsecond_desc.has_value()) {
+        // a. Assert: microsecondDesc is a data Property Descriptor.
+        VERIFY(microsecond_desc->is_data_descriptor());
+
+        // b. Set result.[[Microsecond]] to ℝ(microsecondDesc.[[Value]]).
+        result.microsecond = microsecond_desc->value->as_double();
+    }
+
+    // 15. Let nanosecondDesc be OrdinaryGetOwnProperty(partial, "nanosecond").
+    auto nanosecond_desc = MUST(partial->Object::internal_get_own_property(vm.names.nanosecond));
+
+    // 16. If nanosecondDesc is not undefined, then
+    if (nanosecond_desc.has_value()) {
+        // a. Assert: nanosecondDesc is a data Property Descriptor.
+        VERIFY(nanosecond_desc->is_data_descriptor());
+
+        // b. Set result.[[Nanosecond]] to ℝ(nanosecondDesc.[[Value]]).
+        result.nanosecond = nanosecond_desc->value->as_double();
+    }
+
+    // 17. Return result.
     return result;
 }
 
 // 4.5.9 TemporalTimeToString ( hour, minute, second, millisecond, microsecond, nanosecond, precision ), https://tc39.es/proposal-temporal/#sec-temporal-temporaltimetostring
-String temporal_time_to_string(u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, u16 nanosecond, Variant<StringView, u8> const& precision)
+ThrowCompletionOr<String> temporal_time_to_string(VM& vm, u8 hour, u8 minute, u8 second, u16 millisecond, u16 microsecond, u16 nanosecond, Variant<StringView, u8> const& precision)
 {
     // 1. Assert: hour, minute, second, millisecond, microsecond and nanosecond are integers.
 
@@ -383,10 +451,10 @@ String temporal_time_to_string(u8 hour, u8 minute, u8 second, u16 millisecond, u
     // 3. Let minute be ToZeroPaddedDecimalString(minute, 2).
 
     // 4. Let seconds be ! FormatSecondsStringPart(second, millisecond, microsecond, nanosecond, precision).
-    auto seconds = format_seconds_string_part(second, millisecond, microsecond, nanosecond, precision);
+    auto seconds = MUST_OR_THROW_OOM(format_seconds_string_part(vm, second, millisecond, microsecond, nanosecond, precision));
 
     // 5. Return the string-concatenation of hour, the code unit 0x003A (COLON), minute, and seconds.
-    return String::formatted("{:02}:{:02}{}", hour, minute, seconds);
+    return TRY_OR_THROW_OOM(vm, String::formatted("{:02}:{:02}{}", hour, minute, seconds));
 }
 
 // 4.5.10 CompareTemporalTime ( h1, min1, s1, ms1, mus1, ns1, h2, min2, s2, ms2, mus2, ns2 ), https://tc39.es/proposal-temporal/#sec-temporal-comparetemporaltime
@@ -493,17 +561,17 @@ DaysAndTime round_time(u8 hour, u8 minute, u8 second, u16 millisecond, u16 micro
             day_length_ns = ns_per_day;
 
         // b. Let quantity be (((((hour × 60 + minute) × 60 + second) × 1000 + millisecond) × 1000 + microsecond) × 1000 + nanosecond) / dayLengthNs.
-        quantity = (((((hour * 60 + minute) * 60 + second) * 1000 + millisecond) * 1000 + microsecond) * 1000 + nanosecond) / *day_length_ns;
+        quantity = (((((hour * 60.0 + minute) * 60.0 + second) * 1000.0 + millisecond) * 1000.0 + microsecond) * 1000.0 + nanosecond) / *day_length_ns;
     }
     // 4. Else if unit is "hour", then
     else if (unit == "hour"sv) {
         // a. Let quantity be (fractionalSecond / 60 + minute) / 60 + hour.
-        quantity = (fractional_second / 60 + minute) / 60 + hour;
+        quantity = (fractional_second / 60.0 + minute) / 60.0 + hour;
     }
     // 5. Else if unit is "minute", then
     else if (unit == "minute"sv) {
         // a. Let quantity be fractionalSecond / 60 + minute.
-        quantity = fractional_second / 60 + minute;
+        quantity = fractional_second / 60.0 + minute;
     }
     // 6. Else if unit is "second", then
     else if (unit == "second"sv) {
@@ -576,7 +644,7 @@ DaysAndTime round_time(u8 hour, u8 minute, u8 second, u16 millisecond, u16 micro
 }
 
 // 4.5.13 DifferenceTemporalPlainTime ( operation, temporalTime, other, options ), https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplaintime
-ThrowCompletionOr<Duration*> difference_temporal_plain_time(VM& vm, DifferenceOperation operation, PlainTime const& temporal_time, Value other_value, Value options_value)
+ThrowCompletionOr<NonnullGCPtr<Duration>> difference_temporal_plain_time(VM& vm, DifferenceOperation operation, PlainTime const& temporal_time, Value other_value, Value options_value)
 {
     // 1. If operation is since, let sign be -1. Otherwise, let sign be 1.
     i8 sign = operation == DifferenceOperation::Since ? -1 : 1;

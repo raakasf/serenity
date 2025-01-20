@@ -4,20 +4,28 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/DocumentTypePrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentType.h>
 
 namespace Web::DOM {
 
+JS_DEFINE_ALLOCATOR(DocumentType);
+
 JS::NonnullGCPtr<DocumentType> DocumentType::create(Document& document)
 {
-    return *document.heap().allocate<DocumentType>(document.realm(), document);
+    return document.heap().allocate<DocumentType>(document.realm(), document);
 }
 
 DocumentType::DocumentType(Document& document)
     : Node(document, NodeType::DOCUMENT_TYPE_NODE)
 {
-    set_prototype(&Bindings::cached_web_prototype(realm(), "DocumentType"));
+}
+
+void DocumentType::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(DocumentType);
 }
 
 }

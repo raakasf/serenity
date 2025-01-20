@@ -21,6 +21,7 @@ public:
     };
 
     virtual ~Splitter() override = default;
+    void set_opportunistic_resizee(OpportunisticResizee resizee) { m_opportunistic_resizee = resizee; }
 
 protected:
     explicit Splitter(Gfx::Orientation);
@@ -35,8 +36,7 @@ protected:
     virtual void did_layout() override;
     virtual void custom_layout() override;
 
-    OpportunisticResizee opportunisitic_resizee() const { return m_opportunistic_resizee; }
-    void set_opportunisitic_resizee(OpportunisticResizee resizee) { m_opportunistic_resizee = resizee; }
+    OpportunisticResizee opportunistic_resizee() const { return m_opportunistic_resizee; }
 
 private:
     void override_cursor(bool do_override);
@@ -70,7 +70,7 @@ private:
         WeakPtr<Widget> second_widget;
     };
 
-    Grabbable* grabbable_at(Gfx::IntPoint const&);
+    Grabbable* grabbable_at(Gfx::IntPoint);
     void set_hovered_grabbable(Grabbable*);
 
     Vector<Grabbable> m_grabbables;

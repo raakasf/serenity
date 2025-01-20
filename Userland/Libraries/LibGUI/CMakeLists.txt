@@ -1,10 +1,16 @@
-compile_gml(EmojiInputDialog.gml EmojiInputDialogGML.h emoji_input_dialog_gml)
-compile_gml(FontPickerDialog.gml FontPickerDialogGML.h font_picker_dialog_gml)
-compile_gml(FilePickerDialog.gml FilePickerDialogGML.h file_picker_dialog_gml)
-compile_gml(PasswordInputDialog.gml PasswordInputDialogGML.h password_input_dialog_gml)
+compile_gml(DynamicWidgetContainerControls.gml DynamicWidgetContainerControls.cpp)
+
+compile_gml(AboutDialog.gml AboutDialogGML.cpp)
+stringify_gml(DatePickerDialog.gml DatePickerDialogGML.h date_picker_dialog_gml)
+compile_gml(EmojiInputDialog.gml EmojiInputDialogGML.cpp)
+compile_gml(FontPickerDialog.gml FontPickerDialogGML.cpp)
+compile_gml(FilePickerDialog.gml FilePickerDialogGML.cpp)
+compile_gml(IncrementalSearchBanner.gml IncrementalSearchBannerGML.cpp)
+compile_gml(PasswordInputDialog.gml PasswordInputDialogGML.cpp)
 
 set(SOURCES
     AboutDialog.cpp
+    AboutDialogGML.cpp
     AbstractButton.cpp
     AbstractScrollableWidget.cpp
     AbstractSlider.cpp
@@ -29,20 +35,27 @@ set(SOURCES
     CommandPalette.cpp
     CommonActions.cpp
     CommonLocationsProvider.cpp
+    CommonMenus.cpp
     ConnectionToWindowManagerServer.cpp
     ConnectionToWindowServer.cpp
+    DatePicker.cpp
     Desktop.cpp
     Dialog.cpp
     DisplayLink.cpp
     DragOperation.cpp
+    DynamicWidgetContainer.cpp
+    DynamicWidgetContainerControls.cpp
     EditingEngine.cpp
     EmojiInputDialog.cpp
+    EmojiInputDialogGML.cpp
     Event.cpp
     FileIconProvider.cpp
     FilePicker.cpp
+    FilePickerDialogGML.cpp
     FileSystemModel.cpp
     FilteringProxyModel.cpp
     FontPicker.cpp
+    FontPickerDialogGML.cpp
     Frame.cpp
     GitCommitLexer.cpp
     GitCommitSyntaxHighlighter.cpp
@@ -56,11 +69,14 @@ set(SOURCES
     Icon.cpp
     IconView.cpp
     ImageWidget.cpp
+    IncrementalSearchBanner.cpp
+    IncrementalSearchBannerGML.cpp
     INILexer.cpp
     INISyntaxHighlighter.cpp
     InputBox.cpp
     JsonArrayModel.cpp
     Label.cpp
+    LabelWithEventDispatcher.cpp
     Layout.cpp
     LazyWidget.cpp
     LinkLabel.cpp
@@ -75,14 +91,21 @@ set(SOURCES
     MouseTracker.cpp
     MultiView.cpp
     Notification.cpp
+    NumericInput.cpp
+    Object.cpp
     OpacitySlider.cpp
     Painter.cpp
     PasswordInputDialog.cpp
+    PasswordInputDialogGML.cpp
+    PathBreadcrumbbar.cpp
     PersistentModelIndex.cpp
     Process.cpp
     ProcessChooser.cpp
     Progressbar.cpp
+    Property.cpp
+    PropertyDeserializer.cpp
     RadioButton.cpp
+    RangeSlider.cpp
     RegularEditingEngine.cpp
     ResizeCorner.cpp
     RunningProcessesModel.cpp
@@ -129,11 +152,9 @@ set(GENERATED_SOURCES
     ../../Services/WindowServer/WindowManagerClientEndpoint.h
     ../../Services/WindowServer/WindowManagerServerEndpoint.h
     ../../Services/WindowServer/WindowServerEndpoint.h
-    EmojiInputDialogGML.h
-    FilePickerDialogGML.h
-    FontPickerDialogGML.h
-    PasswordInputDialogGML.h
+    DatePickerDialogGML.h
 )
 
 serenity_lib(LibGUI gui)
-target_link_libraries(LibGUI LibCore LibGfx LibIPC LibThreading LibRegex LibSyntax LibConfig LibUnicode)
+target_link_libraries(LibGUI PRIVATE LibCore LibELF LibFileSystem LibGfx LibImageDecoderClient LibIPC LibThreading LibRegex LibConfig LibUnicode LibURL)
+target_link_libraries(LibGUI PUBLIC LibSyntax)

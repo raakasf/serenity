@@ -10,24 +10,27 @@
 
 namespace JS {
 
-ModuleNamespaceObject::ModuleNamespaceObject(Realm& realm, Module* module, Vector<FlyString> exports)
-    : Object(*realm.intrinsics().object_prototype())
+JS_DEFINE_ALLOCATOR(ModuleNamespaceObject);
+
+ModuleNamespaceObject::ModuleNamespaceObject(Realm& realm, Module* module, Vector<DeprecatedFlyString> exports)
+    : Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype(), MayInterfereWithIndexedPropertyAccess::Yes)
     , m_module(module)
     , m_exports(move(exports))
 {
     // Note: We just perform step 6 of 10.4.6.12 ModuleNamespaceCreate ( module, exports ), https://tc39.es/ecma262/#sec-modulenamespacecreate
     // 6. Let sortedExports be a List whose elements are the elements of exports ordered as if an Array of the same values had been sorted using %Array.prototype.sort% using undefined as comparefn.
-    quick_sort(m_exports, [&](FlyString const& lhs, FlyString const& rhs) {
+    quick_sort(m_exports, [&](DeprecatedFlyString const& lhs, DeprecatedFlyString const& rhs) {
         return lhs.view() < rhs.view();
     });
 }
 
 void ModuleNamespaceObject::initialize(Realm& realm)
 {
-    Object::initialize(realm);
+    auto& vm = this->vm();
+    Base::initialize(realm);
 
     // 28.3.1 @@toStringTag, https://tc39.es/ecma262/#sec-@@tostringtag
-    define_direct_property(*vm().well_known_symbol_to_string_tag(), js_string(vm(), "Module"sv), 0);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, "Module"_string), 0);
 }
 
 // 10.4.6.1 [[GetPrototypeOf]] ( ), https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-getprototypeof
@@ -79,11 +82,11 @@ ThrowCompletionOr<Optional<PropertyDescriptor>> ModuleNamespaceObject::internal_
 }
 
 // 10.4.6.6 [[DefineOwnProperty]] ( P, Desc ), https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-defineownproperty-p-desc
-ThrowCompletionOr<bool> ModuleNamespaceObject::internal_define_own_property(PropertyKey const& property_key, PropertyDescriptor const& descriptor)
+ThrowCompletionOr<bool> ModuleNamespaceObject::internal_define_own_property(PropertyKey const& property_key, PropertyDescriptor const& descriptor, Optional<PropertyDescriptor>* precomputed_get_own_property)
 {
     // 1. If Type(P) is Symbol, return ! OrdinaryDefineOwnProperty(O, P, Desc).
     if (property_key.is_symbol())
-        return MUST(Object::internal_define_own_property(property_key, descriptor));
+        return MUST(Object::internal_define_own_property(property_key, descriptor, precomputed_get_own_property));
 
     // 2. Let current be ? O.[[GetOwnProperty]](P).
     auto current = TRY(internal_get_own_property(property_key));
@@ -134,14 +137,14 @@ ThrowCompletionOr<bool> ModuleNamespaceObject::internal_has_property(PropertyKey
 }
 
 // 10.4.6.8 [[Get]] ( P, Receiver ), https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
-ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& property_key, Value receiver) const
+ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& property_key, Value receiver, CacheablePropertyMetadata* cacheable_metadata, PropertyLookupPhase phase) const
 {
     auto& vm = this->vm();
 
     // 1. If Type(P) is Symbol, then
     if (property_key.is_symbol()) {
         // a. Return ! OrdinaryGet(O, P, Receiver).
-        return MUST(Object::internal_get(property_key, receiver));
+        return MUST(Object::internal_get(property_key, receiver, cacheable_metadata, phase));
     }
 
     // 2. Let exports be O.[[Exports]].
@@ -158,7 +161,7 @@ ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& 
     VERIFY(binding.is_valid());
 
     // 7. Let targetModule be binding.[[Module]].
-    auto* target_module = binding.module;
+    auto target_module = binding.module;
 
     // 8. Assert: targetModule is not undefined.
     VERIFY(target_module);
@@ -181,7 +184,7 @@ ThrowCompletionOr<Value> ModuleNamespaceObject::internal_get(PropertyKey const& 
 }
 
 // 10.4.6.9 [[Set]] ( P, V, Receiver ), https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-set-p-v-receiver
-ThrowCompletionOr<bool> ModuleNamespaceObject::internal_set(PropertyKey const&, Value, Value)
+ThrowCompletionOr<bool> ModuleNamespaceObject::internal_set(PropertyKey const&, Value, Value, CacheablePropertyMetadata*)
 {
     // 1. Return false.
     return false;
@@ -219,10 +222,16 @@ ThrowCompletionOr<MarkedVector<Value>> ModuleNamespaceObject::internal_own_prope
     // 3. Return the list-concatenation of exports and symbolKeys.
     exports.ensure_capacity(m_exports.size() + symbol_keys.size());
     for (auto const& export_name : m_exports)
-        exports.unchecked_append(js_string(vm(), export_name));
+        exports.unchecked_append(PrimitiveString::create(vm(), export_name));
     exports.extend(symbol_keys);
 
     return exports;
+}
+
+void ModuleNamespaceObject::visit_edges(JS::Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_module);
 }
 
 }

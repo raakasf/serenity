@@ -7,15 +7,15 @@
 #pragma once
 
 #include <Kernel/Devices/CharacterDevice.h>
-#include <Kernel/IOWindow.h>
+#include <Kernel/Library/IOWindow.h>
 
 namespace Kernel {
 
 class SerialDevice final : public CharacterDevice {
-    friend class DeviceManagement;
+    friend class Device;
 
 public:
-    static NonnullLockRefPtr<SerialDevice> must_create(size_t com_number);
+    static NonnullRefPtr<SerialDevice> must_create(size_t com_number);
 
     virtual ~SerialDevice() override;
 
@@ -130,7 +130,7 @@ private:
     bool m_break_enable { false };
     u8 m_modem_control { 0 };
     bool m_last_put_char_was_carriage_return { false };
-    Spinlock m_serial_lock { LockRank::None };
+    Spinlock<LockRank::None> m_serial_lock {};
 };
 
 }

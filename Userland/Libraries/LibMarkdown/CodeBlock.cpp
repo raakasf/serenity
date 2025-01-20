@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Forward.h>
 #include <AK/StringBuilder.h>
 #include <LibJS/MarkupGenerator.h>
 #include <LibMarkdown/CodeBlock.h>
@@ -13,7 +14,7 @@
 
 namespace Markdown {
 
-String CodeBlock::render_to_html(bool) const
+ByteString CodeBlock::render_to_html(bool) const
 {
     StringBuilder builder;
 
@@ -29,10 +30,17 @@ String CodeBlock::render_to_html(bool) const
     else
         builder.appendff("<code class=\"language-{}\">", escape_html_entities(m_language));
 
-    if (m_language == "js")
-        builder.append(JS::MarkupGenerator::html_from_source(m_code));
-    else
+    if (m_language == "js") {
+        auto html_or_error = JS::MarkupGenerator::html_from_source(m_code);
+        if (html_or_error.is_error()) {
+            warnln("Could not render js code to html: {}", html_or_error.error());
+            builder.append(escape_html_entities(m_code));
+        } else {
+            builder.append(html_or_error.release_value());
+        }
+    } else {
         builder.append(escape_html_entities(m_code));
+    }
 
     builder.append("</code>"sv);
 
@@ -43,25 +51,25 @@ String CodeBlock::render_to_html(bool) const
 
     builder.append("</pre>\n"sv);
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
-String CodeBlock::render_for_terminal(size_t) const
+Vector<ByteString> CodeBlock::render_lines_for_terminal(size_t) const
 {
-    StringBuilder builder;
+    Vector<ByteString> lines;
 
-    for (auto const& line : m_code.split('\n')) {
-        // Do not indent too much if we are in the synopsis
-        if (!(m_current_section && m_current_section->render_for_terminal().contains("SYNOPSIS"sv)))
-            builder.append("  "sv);
-
-        builder.append("  "sv);
-        builder.append(line);
-        builder.append("\n"sv);
+    // Do not indent too much if we are in the synopsis
+    auto indentation = "    "sv;
+    if (m_current_section != nullptr) {
+        auto current_section_name = m_current_section->render_lines_for_terminal()[0];
+        if (current_section_name.contains("SYNOPSIS"sv))
+            indentation = "  "sv;
     }
-    builder.append("\n"sv);
 
-    return builder.build();
+    for (auto const& line : m_code.split('\n', SplitBehavior::KeepEmpty))
+        lines.append(ByteString::formatted("{}{}", indentation, line));
+
+    return lines;
 }
 
 RecursionDecision CodeBlock::walk(Visitor& visitor) const
@@ -165,7 +173,7 @@ OwnPtr<CodeBlock> CodeBlock::parse_backticks(LineIterator& lines, Heading* curre
         builder.append('\n');
     }
 
-    return make<CodeBlock>(language, style, builder.build(), current_section);
+    return make<CodeBlock>(language, style, builder.to_byte_string(), current_section);
 }
 
 OwnPtr<CodeBlock> CodeBlock::parse_indent(LineIterator& lines)
@@ -188,6 +196,6 @@ OwnPtr<CodeBlock> CodeBlock::parse_indent(LineIterator& lines)
         builder.append('\n');
     }
 
-    return make<CodeBlock>("", "", builder.build(), nullptr);
+    return make<CodeBlock>("", "", builder.to_byte_string(), nullptr);
 }
 }

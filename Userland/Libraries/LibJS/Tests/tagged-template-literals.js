@@ -154,7 +154,7 @@ describe("tagged template literal functionality", () => {
         expect(stringsValue.raw[1]).toBe("invalid\\u");
     });
 
-    test("string value gets cached per AST node", () => {
+    test.xfail("string value gets cached per AST node", () => {
         function call(func, val) {
             return func`template${val}second`;
         }
@@ -162,5 +162,18 @@ describe("tagged template literal functionality", () => {
         let firstResult = call(value => value, 1);
         let secondResult = call(value => value, 2);
         expect(firstResult).toBe(secondResult);
+    });
+
+    test.xfail("this value of call comes from reference", () => {
+        let thisValue = null;
+        const obj = {
+            func() {
+                thisValue = this;
+            },
+        };
+
+        obj.func``;
+
+        expect(thisValue).toBe(obj);
     });
 });

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2021-2023, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -7,13 +7,13 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/LegacyPlatformObject.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 
 namespace Web::DOM {
 
 // https://dom.spec.whatwg.org/#nodelist
-class NodeList : public Bindings::LegacyPlatformObject {
-    WEB_PLATFORM_OBJECT(NodeList, Bindings::LegacyPlatformObject);
+class NodeList : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(NodeList, Bindings::PlatformObject);
 
 public:
     virtual ~NodeList() override;
@@ -21,11 +21,12 @@ public:
     virtual u32 length() const = 0;
     virtual Node const* item(u32 index) const = 0;
 
-    virtual JS::Value item_value(size_t index) const override;
-    virtual bool is_supported_property_index(u32) const override;
+    virtual Optional<JS::Value> item_value(size_t index) const override;
 
 protected:
     explicit NodeList(JS::Realm&);
+
+    virtual void initialize(JS::Realm&) override;
 };
 
 }

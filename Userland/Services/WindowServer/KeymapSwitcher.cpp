@@ -6,7 +6,6 @@
 
 #include <AK/JsonObject.h>
 #include <LibCore/ConfigFile.h>
-#include <LibCore/File.h>
 #include <LibCore/Process.h>
 #include <WindowServer/KeymapSwitcher.h>
 #include <spawn.h>
@@ -88,19 +87,17 @@ void KeymapSwitcher::next_keymap()
     }
 }
 
-String KeymapSwitcher::get_current_keymap() const
+ByteString KeymapSwitcher::get_current_keymap() const
 {
-    auto proc_keymap = Core::File::construct("/sys/kernel/keymap");
-    if (!proc_keymap->open(Core::OpenMode::ReadOnly))
-        VERIFY_NOT_REACHED();
-
-    auto json = JsonValue::from_string(proc_keymap->read_all()).release_value_but_fixme_should_propagate_errors();
+    auto proc_keymap = Core::File::open("/sys/kernel/keymap"sv, Core::File::OpenMode::Read).release_value_but_fixme_should_propagate_errors();
+    auto proc_keymap_data = proc_keymap->read_until_eof().release_value_but_fixme_should_propagate_errors();
+    auto json = JsonValue::from_string(proc_keymap_data).release_value_but_fixme_should_propagate_errors();
     auto const& keymap_object = json.as_object();
-    VERIFY(keymap_object.has("keymap"sv));
-    return keymap_object.get("keymap"sv).to_string();
+    VERIFY(keymap_object.has_string("keymap"sv));
+    return keymap_object.get_byte_string("keymap"sv).value();
 }
 
-void KeymapSwitcher::set_keymap(const AK::String& keymap)
+void KeymapSwitcher::set_keymap(const AK::ByteString& keymap)
 {
     if (Core::Process::spawn("/bin/keymap"sv, Array { "-m", keymap.characters() }).is_error())
         dbgln("Failed to call /bin/keymap, error: {} ({})", errno, strerror(errno));

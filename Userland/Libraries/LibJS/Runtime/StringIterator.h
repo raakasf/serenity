@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/String.h>
 #include <AK/Utf8View.h>
 #include <LibJS/Runtime/Object.h>
 
@@ -13,9 +14,10 @@ namespace JS {
 
 class StringIterator final : public Object {
     JS_OBJECT(StringIterator, Object);
+    JS_DECLARE_ALLOCATOR(StringIterator);
 
 public:
-    static StringIterator* create(Realm&, String string);
+    static NonnullGCPtr<StringIterator> create(Realm&, String string);
 
     virtual ~StringIterator() override = default;
 

@@ -7,15 +7,15 @@
 #pragma once
 
 #include <AK/Error.h>
+#include <AK/RefPtr.h>
 #include <AK/Try.h>
 #include <AK/Types.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/FileSystem/SysFS/Component.h>
-#include <Kernel/KBufferBuilder.h>
-#include <Kernel/Library/LockRefPtr.h>
+#include <Kernel/Library/KBufferBuilder.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Locking/Mutex.h>
-#include <Kernel/UserOrKernelBuffer.h>
 
 namespace Kernel {
 
@@ -27,6 +27,8 @@ protected:
     explicit SysFSGlobalInformation(SysFSDirectory const& parent_directory);
     virtual ErrorOr<void> refresh_data(OpenFileDescription&) const override;
     virtual ErrorOr<void> try_generate(KBufferBuilder&) = 0;
+
+    virtual bool is_readable_by_jailed_processes() const { return false; }
 
     mutable Mutex m_refresh_lock;
 };

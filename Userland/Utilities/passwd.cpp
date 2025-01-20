@@ -30,8 +30,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     bool del = false;
     bool lock = false;
     bool unlock = false;
-    // FIXME: Replace with StringView once Core::Account::from_name stops taking a char const*.
-    String username {};
+    StringView username {};
 
     auto args_parser = Core::ArgsParser();
     args_parser.set_general_help("Modify an account password.");
@@ -88,7 +87,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
             return 1;
         }
 
-        target_account.set_password(new_password);
+        TRY(target_account.set_password(new_password));
     }
 
     TRY(Core::System::pledge("stdio wpath rpath cpath fattr"));

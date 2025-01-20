@@ -14,9 +14,10 @@ namespace Web::DOM {
 // https://dom.spec.whatwg.org/#nodeiterator
 class NodeIterator final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(NodeIterator, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(NodeIterator);
 
 public:
-    static JS::NonnullGCPtr<NodeIterator> create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter>);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<NodeIterator>> create(Node& root, unsigned what_to_show, JS::GCPtr<NodeFilter>);
 
     virtual ~NodeIterator() override;
 
@@ -37,6 +38,7 @@ public:
 private:
     explicit NodeIterator(Node& root);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
 

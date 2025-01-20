@@ -7,14 +7,13 @@
 #pragma once
 
 #include <AK/Optional.h>
-#include <AK/String.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/Utf16String.h>
 
 namespace JS {
 
 // https://github.com/tc39/proposal-regexp-legacy-features#regexp
-// The %RegExp% instrinsic object, which is the builtin RegExp constructor, has the following additional internal slots:
+// The %RegExp% intrinsic object, which is the builtin RegExp constructor, has the following additional internal slots:
 // [[RegExpInput]]
 // [[RegExpLastMatch]]
 // [[RegExpLastParen]]

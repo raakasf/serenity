@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2022-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,9 +15,11 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(RelativeTimeFormat);
+
 // 17 RelativeTimeFormat Objects, https://tc39.es/ecma402/#relativetimeformat-objects
 RelativeTimeFormat::RelativeTimeFormat(Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
 {
 }
 
@@ -99,7 +101,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithUnit>> partition_relative_time_patt
 
     // 4. If value is NaN, +∞𝔽, or -∞𝔽, throw a RangeError exception.
     if (!Value(value).is_finite_number())
-        return vm.throw_completion<RangeError>(ErrorType::IntlNumberIsNaNOrInfinity);
+        return vm.throw_completion<RangeError>(ErrorType::NumberIsNaNOrInfinity);
 
     // 5. Let unit be ? SingularRelativeTimeUnit(unit).
     auto time_unit = TRY(singular_relative_time_unit(vm, unit));
@@ -148,7 +150,7 @@ ThrowCompletionOr<Vector<PatternPartitionWithUnit>> partition_relative_time_patt
             VERIFY(patterns.size() == 1);
 
             // i. Let result be patterns.[[<valueString>]].
-            auto result = patterns[0].pattern.to_string();
+            auto result = MUST(String::from_utf8(patterns[0].pattern));
 
             // ii. Return a List containing the Record { [[Type]]: "literal", [[Value]]: result }.
             return Vector<PatternPartitionWithUnit> { { "literal"sv, move(result) } };
@@ -176,11 +178,11 @@ ThrowCompletionOr<Vector<PatternPartitionWithUnit>> partition_relative_time_patt
     // 20. Let fv be ! PartitionNumberPattern(relativeTimeFormat.[[NumberFormat]], value).
     auto value_partitions = partition_number_pattern(vm, relative_time_format.number_format(), Value(value));
 
-    // 21. Let pr be ! ResolvePlural(relativeTimeFormat.[[PluralRules]], value).
+    // 21. Let pr be ! ResolvePlural(relativeTimeFormat.[[PluralRules]], value).[[PluralCategory]].
     auto plurality = resolve_plural(relative_time_format.plural_rules(), Value(value));
 
     // 22. Let pattern be po.[[<pr>]].
-    auto pattern = patterns.find_if([&](auto& p) { return p.plurality == plurality; });
+    auto pattern = patterns.find_if([&](auto& p) { return p.plurality == plurality.plural_category; });
     if (pattern == patterns.end())
         return Vector<PatternPartitionWithUnit> {};
 
@@ -233,15 +235,15 @@ ThrowCompletionOr<String> format_relative_time(VM& vm, RelativeTimeFormat& relat
     // 3. For each Record { [[Type]], [[Value]], [[Unit]] } part in parts, do
     for (auto& part : parts) {
         // a. Set result to the string-concatenation of result and part.[[Value]].
-        result.append(move(part.value));
+        result.append(part.value);
     }
 
     // 4. Return result.
-    return result.build();
+    return MUST(result.to_string());
 }
 
 // 17.5.5 FormatRelativeTimeToParts ( relativeTimeFormat, value, unit ), https://tc39.es/ecma402/#sec-FormatRelativeTimeToParts
-ThrowCompletionOr<Array*> format_relative_time_to_parts(VM& vm, RelativeTimeFormat& relative_time_format, double value, StringView unit)
+ThrowCompletionOr<NonnullGCPtr<Array>> format_relative_time_to_parts(VM& vm, RelativeTimeFormat& relative_time_format, double value, StringView unit)
 {
     auto& realm = *vm.current_realm();
 
@@ -249,7 +251,7 @@ ThrowCompletionOr<Array*> format_relative_time_to_parts(VM& vm, RelativeTimeForm
     auto parts = TRY(partition_relative_time_pattern(vm, relative_time_format, value, unit));
 
     // 2. Let result be ! ArrayCreate(0).
-    auto* result = MUST(Array::create(realm, 0));
+    auto result = MUST(Array::create(realm, 0));
 
     // 3. Let n be 0.
     size_t n = 0;
@@ -257,18 +259,18 @@ ThrowCompletionOr<Array*> format_relative_time_to_parts(VM& vm, RelativeTimeForm
     // 4. For each Record { [[Type]], [[Value]], [[Unit]] } part in parts, do
     for (auto& part : parts) {
         // a. Let O be OrdinaryObjectCreate(%Object.prototype%).
-        auto* object = Object::create(realm, realm.intrinsics().object_prototype());
+        auto object = Object::create(realm, realm.intrinsics().object_prototype());
 
         // b. Perform ! CreateDataPropertyOrThrow(O, "type", part.[[Type]]).
-        MUST(object->create_data_property_or_throw(vm.names.type, js_string(vm, part.type)));
+        MUST(object->create_data_property_or_throw(vm.names.type, PrimitiveString::create(vm, part.type)));
 
         // c. Perform ! CreateDataPropertyOrThrow(O, "value", part.[[Value]]).
-        MUST(object->create_data_property_or_throw(vm.names.value, js_string(vm, move(part.value))));
+        MUST(object->create_data_property_or_throw(vm.names.value, PrimitiveString::create(vm, move(part.value))));
 
         // d. If part.[[Unit]] is not empty, then
         if (!part.unit.is_empty()) {
             // i. Perform ! CreateDataPropertyOrThrow(O, "unit", part.[[Unit]]).
-            MUST(object->create_data_property_or_throw(vm.names.unit, js_string(vm, part.unit)));
+            MUST(object->create_data_property_or_throw(vm.names.unit, PrimitiveString::create(vm, part.unit)));
         }
 
         // e. Perform ! CreateDataPropertyOrThrow(result, ! ToString(n), O).

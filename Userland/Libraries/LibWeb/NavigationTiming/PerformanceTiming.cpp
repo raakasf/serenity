@@ -4,23 +4,24 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/PerformanceTimingPrototype.h>
 #include <LibWeb/NavigationTiming/PerformanceTiming.h>
 
 namespace Web::NavigationTiming {
 
-PerformanceTiming::PerformanceTiming(HTML::Window& window)
-    : PlatformObject(window.realm())
-    , m_window(window)
+JS_DEFINE_ALLOCATOR(PerformanceTiming);
+
+PerformanceTiming::PerformanceTiming(JS::Realm& realm)
+    : PlatformObject(realm)
 {
-    set_prototype(&Bindings::cached_web_prototype(realm(), "PerformanceTiming"));
 }
 
 PerformanceTiming::~PerformanceTiming() = default;
 
-void PerformanceTiming::visit_edges(Cell::Visitor& visitor)
+void PerformanceTiming::initialize(JS::Realm& realm)
 {
-    Base::visit_edges(visitor);
-    visitor.visit(m_window.ptr());
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(PerformanceTiming);
 }
 
 }

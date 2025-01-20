@@ -24,7 +24,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_positional_argument(path, "Link path", "path", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    String path_buffer;
+    ByteString path_buffer;
     if (path.is_empty()) {
         path_buffer = LexicalPath::basename(target);
         path = path_buffer.view();
@@ -33,7 +33,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     auto stat = Core::System::lstat(path);
 
     if (stat.is_error() && stat.error().code() != ENOENT)
-        return stat.error();
+        return stat.release_error();
 
     if (!stat.is_error() && S_ISDIR(stat.value().st_mode)) {
         // The target path is a directory, so we presumably want <path>/<filename> as the effective path.
