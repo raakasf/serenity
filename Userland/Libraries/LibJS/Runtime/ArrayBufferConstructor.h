@@ -12,13 +12,14 @@ namespace JS {
 
 class ArrayBufferConstructor final : public NativeFunction {
     JS_OBJECT(ArrayBufferConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(ArrayBufferConstructor);
 
 public:
     virtual void initialize(Realm&) override;
     virtual ~ArrayBufferConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
     explicit ArrayBufferConstructor(Realm&);

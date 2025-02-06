@@ -15,13 +15,8 @@ class EBRPartitionTable : public MBRPartitionTable {
 public:
     ~EBRPartitionTable();
 
-#ifdef KERNEL
-    static ErrorOr<NonnullOwnPtr<EBRPartitionTable>> try_to_initialize(Kernel::StorageDevice const&);
-    explicit EBRPartitionTable(Kernel::StorageDevice const&);
-#else
-    static ErrorOr<NonnullOwnPtr<EBRPartitionTable>> try_to_initialize(NonnullRefPtr<Core::File>);
-    explicit EBRPartitionTable(NonnullRefPtr<Core::File>);
-#endif
+    static ErrorOr<NonnullOwnPtr<EBRPartitionTable>> try_to_initialize(PartitionableDevice);
+    explicit EBRPartitionTable(PartitionableDevice);
 
     virtual bool is_valid() const override
     {
@@ -29,11 +24,7 @@ public:
     }
 
 private:
-#ifdef KERNEL
-    void search_extended_partition(Kernel::StorageDevice const&, MBRPartitionTable&, u64, size_t limit);
-#else
-    void search_extended_partition(NonnullRefPtr<Core::File>, MBRPartitionTable&, u64, size_t limit);
-#endif
+    void search_extended_partition(MBRPartitionTable&, u64, size_t limit);
 
     bool m_valid { false };
 };

@@ -60,6 +60,10 @@ public:
     constexpr auto elements() const { return m_elements; }
     constexpr auto elements() { return m_elements; }
 
+    // FIXME: Change to multi-arg operator[] once we upgrade to C++23
+    constexpr auto const& operator()(size_t row, size_t col) const { return m_elements[row][col]; }
+    constexpr auto& operator()(size_t row, size_t col) { return m_elements[row][col]; }
+
     [[nodiscard]] constexpr Matrix operator*(Matrix const& other) const
     {
         Matrix product;
@@ -212,7 +216,8 @@ public:
     }
 
     template<size_t U>
-    [[nodiscard]] constexpr Matrix<U, T> submatrix_from_topleft() const requires(U > 0 && U < N)
+    [[nodiscard]] constexpr Matrix<U, T> submatrix_from_topleft() const
+    requires(U > 0 && U < N)
     {
         Matrix<U, T> result;
         for (size_t i = 0; i < U; ++i) {
@@ -220,6 +225,11 @@ public:
                 result.m_elements[i][j] = m_elements[i][j];
         }
         return result;
+    }
+
+    constexpr bool is_invertible() const
+    {
+        return determinant() != static_cast<T>(0.0);
     }
 
 private:

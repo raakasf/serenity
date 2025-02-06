@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/StdLibExtras.h>
 #include <AK/StringView.h>
 #include <LibGfx/Filters/ColorFilter.h>
 #include <math.h>
@@ -26,7 +25,7 @@ public:
     }
 
 protected:
-    Color convert_color(Color original) override { return original.sepia(m_amount); };
+    Color convert_color(Color original) override { return original.sepia(m_amount); }
 };
 
 }

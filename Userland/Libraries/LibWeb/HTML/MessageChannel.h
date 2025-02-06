@@ -14,9 +14,10 @@ namespace Web::HTML {
 // https://html.spec.whatwg.org/multipage/web-messaging.html#message-channels
 class MessageChannel final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(MessageChannel, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(MessageChannel);
 
 public:
-    static JS::NonnullGCPtr<MessageChannel> construct_impl(JS::Realm&);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MessageChannel>> construct_impl(JS::Realm&);
     virtual ~MessageChannel() override;
 
     MessagePort* port1();
@@ -28,6 +29,7 @@ public:
 private:
     explicit MessageChannel(JS::Realm&);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     JS::GCPtr<MessagePort> m_port1;

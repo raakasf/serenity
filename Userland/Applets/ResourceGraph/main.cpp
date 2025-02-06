@@ -9,7 +9,6 @@
 #include <AK/CircularQueue.h>
 #include <AK/JsonObject.h>
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Stream.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Frame.h>
@@ -36,7 +35,7 @@ private:
     GraphWidget(GraphType graph_type, Optional<Gfx::Color> graph_color, Optional<Gfx::Color> graph_error_color)
         : m_graph_type(graph_type)
     {
-        set_frame_thickness(1);
+        set_frame_style(Gfx::FrameStyle::SunkenPanel);
         m_graph_color = graph_color.value_or(palette().menu_selection());
         m_graph_error_color = graph_error_color.value_or(Color::Red);
         start_timer(1000);
@@ -54,10 +53,10 @@ private:
                 m_last_idle = idle;
                 float cpu = total_diff > 0 ? (float)(total_diff - idle_diff) / (float)total_diff : 0;
                 m_history.enqueue(cpu);
-                m_tooltip = String::formatted("CPU usage: {:.1}%", 100 * cpu);
+                m_tooltip = MUST(String::formatted("CPU usage: {:.1}%", 100 * cpu));
             } else {
                 m_history.enqueue(-1);
-                m_tooltip = "Unable to determine CPU usage"sv;
+                m_tooltip = "Unable to determine CPU usage"_string;
             }
             break;
         }
@@ -67,10 +66,10 @@ private:
                 double total_memory = allocated + available;
                 double memory = (double)allocated / total_memory;
                 m_history.enqueue(memory);
-                m_tooltip = String::formatted("Memory: {} MiB of {:.1} MiB in use", allocated / MiB, total_memory / MiB);
+                m_tooltip = MUST(String::formatted("Memory: {} MiB of {:.1} MiB in use", allocated / MiB, total_memory / MiB));
             } else {
                 m_history.enqueue(-1);
-                m_tooltip = "Unable to determine memory usage"sv;
+                m_tooltip = "Unable to determine memory usage"_string;
             }
             break;
         }
@@ -98,10 +97,10 @@ private:
                     }
                 }
                 m_history.enqueue(static_cast<float>(recent_tx) / static_cast<float>(m_current_scale));
-                m_tooltip = String::formatted("Network: TX {} / RX {} ({:.1} kbit/s)", tx, rx, static_cast<double>(recent_tx) * 8.0 / 1000.0);
+                m_tooltip = MUST(String::formatted("Network: TX {} / RX {} ({:.1} kbit/s)", tx, rx, static_cast<double>(recent_tx) * 8.0 / 1000.0));
             } else {
                 m_history.enqueue(-1);
-                m_tooltip = "Unable to determine network usage"sv;
+                m_tooltip = "Unable to determine network usage"_string;
             }
             break;
         }
@@ -124,13 +123,13 @@ private:
         for (auto value : m_history) {
             if (value >= 0) {
                 painter.draw_line(
-                    { rect.x() + i, rect.bottom() },
+                    { rect.x() + i, rect.bottom() - 1 },
                     { rect.x() + i, rect.top() + (int)(roundf(rect.height() - (value * rect.height()))) },
                     m_graph_color);
             } else {
                 painter.draw_line(
                     { rect.x() + i, rect.top() },
-                    { rect.x() + i, rect.bottom() },
+                    { rect.x() + i, rect.bottom() - 1 },
                     m_graph_error_color);
             }
             ++i;
@@ -144,16 +143,16 @@ private:
         GUI::Process::spawn_or_show_error(window(), "/bin/SystemMonitor"sv, Array { "-t", m_graph_type == GraphType::Network ? "network" : "graphs" });
     }
 
-    ErrorOr<JsonValue> get_data_as_json(OwnPtr<Core::Stream::File>& file, StringView filename)
+    ErrorOr<JsonValue> get_data_as_json(OwnPtr<Core::File>& file, StringView filename)
     {
         if (file) {
             // Seeking to the beginning causes a data refresh!
-            TRY(file->seek(0, Core::Stream::SeekMode::SetPosition));
+            TRY(file->seek(0, SeekMode::SetPosition));
         } else {
-            file = TRY(Core::Stream::File::open(filename, Core::Stream::OpenMode::Read));
+            file = TRY(Core::File::open(filename, Core::File::OpenMode::Read));
         }
 
-        auto file_contents = TRY(file->read_all());
+        auto file_contents = TRY(file->read_until_eof());
         return TRY(JsonValue::from_string(file_contents));
     }
 
@@ -167,8 +166,8 @@ private:
             return false;
 
         auto const& obj = json.value().as_object();
-        total = obj.get("total_time"sv).to_u64();
-        idle = obj.get("idle_time"sv).to_u64();
+        total = obj.get_u64("total_time"sv).value_or(0);
+        idle = obj.get_u64("idle_time"sv).value_or(0);
         return true;
     }
 
@@ -179,11 +178,11 @@ private:
             return false;
 
         auto const& obj = json.value().as_object();
-        unsigned kmalloc_allocated = obj.get("kmalloc_allocated"sv).to_u32();
-        unsigned kmalloc_available = obj.get("kmalloc_available"sv).to_u32();
-        auto physical_allocated = obj.get("physical_allocated"sv).to_u64();
-        auto physical_committed = obj.get("physical_committed"sv).to_u64();
-        auto physical_uncommitted = obj.get("physical_uncommitted"sv).to_u64();
+        unsigned kmalloc_allocated = obj.get_u32("kmalloc_allocated"sv).value_or(0);
+        unsigned kmalloc_available = obj.get_u32("kmalloc_available"sv).value_or(0);
+        auto physical_allocated = obj.get_u64("physical_allocated"sv).value_or(0);
+        auto physical_committed = obj.get_u64("physical_committed"sv).value_or(0);
+        auto physical_uncommitted = obj.get_u64("physical_uncommitted"sv).value_or(0);
         unsigned kmalloc_bytes_total = kmalloc_allocated + kmalloc_available;
         unsigned kmalloc_pages_total = (kmalloc_bytes_total + PAGE_SIZE - 1) / PAGE_SIZE;
         u64 total_userphysical_and_swappable_pages = kmalloc_pages_total + physical_allocated + physical_committed + physical_uncommitted;
@@ -203,13 +202,13 @@ private:
         auto const& array = json.value().as_array();
         for (auto const& adapter_value : array.values()) {
             auto const& adapter_obj = adapter_value.as_object();
-            if (!adapter_obj.has_string("ipv4_address"sv) || !adapter_obj.get("link_up"sv).as_bool())
+            if (!adapter_obj.has_string("ipv4_address"sv) || !adapter_obj.get_bool("link_up"sv).value())
                 continue;
 
-            tx += adapter_obj.get("bytes_in"sv).to_u64();
-            rx += adapter_obj.get("bytes_out"sv).to_u64();
+            tx += adapter_obj.get_u64("bytes_in"sv).value_or(0);
+            rx += adapter_obj.get_u64("bytes_out"sv).value_or(0);
             // Link speed data is given in megabits, but we want all return values to be in bytes.
-            link_speed += adapter_obj.get("link_speed"sv).to_u64() * 8'000'000;
+            link_speed += adapter_obj.get_u64("link_speed"sv).value_or(0) * 8'000'000;
         }
         link_speed /= 8;
         return tx != 0;
@@ -231,16 +230,16 @@ private:
     static constexpr u64 const scale_unit = 8000;
     u64 m_current_scale { scale_unit };
     String m_tooltip;
-    OwnPtr<Core::Stream::File> m_proc_stat;
-    OwnPtr<Core::Stream::File> m_proc_mem;
-    OwnPtr<Core::Stream::File> m_proc_net;
+    OwnPtr<Core::File> m_proc_stat;
+    OwnPtr<Core::File> m_proc_mem;
+    OwnPtr<Core::File> m_proc_net;
 };
 
 ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath unix"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     TRY(Core::System::pledge("stdio recvfd sendfd proc exec rpath"));
 
@@ -258,7 +257,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 1;
     }
 
-    NonnullRefPtrVector<GUI::Window> applet_windows;
+    Vector<NonnullRefPtr<GUI::Window>> applet_windows;
 
     auto create_applet = [&](GraphType graph_type, StringView spec) -> ErrorOr<void> {
         auto parts = spec.split_view(',');
@@ -276,7 +275,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         window->set_window_type(GUI::WindowType::Applet);
         window->resize(GraphWidget::history_size + 2, 15);
 
-        auto graph_widget = TRY(window->try_set_main_widget<GraphWidget>(graph_type, graph_color, Optional<Gfx::Color> {}));
+        auto graph_widget = window->set_main_widget<GraphWidget>(graph_type, graph_color, Optional<Gfx::Color> {});
         window->show();
         applet_windows.append(move(window));
 

@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/RefCounted.h>
 #include <LibJS/Heap/Handle.h>
 #include <LibWeb/DOM/MutationRecord.h>
@@ -30,9 +29,10 @@ struct MutationObserverInit {
 // https://dom.spec.whatwg.org/#mutationobserver
 class MutationObserver final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(MutationObserver, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(MutationObserver);
 
 public:
-    static JS::NonnullGCPtr<MutationObserver> construct_impl(JS::Realm&, JS::GCPtr<WebIDL::CallbackType>);
+    static WebIDL::ExceptionOr<JS::NonnullGCPtr<MutationObserver>> construct_impl(JS::Realm&, JS::GCPtr<WebIDL::CallbackType>);
     virtual ~MutationObserver() override;
 
     WebIDL::ExceptionOr<void> observe(Node& target, MutationObserverInit options = {});
@@ -52,6 +52,7 @@ public:
 private:
     MutationObserver(JS::Realm&, JS::GCPtr<WebIDL::CallbackType>);
 
+    virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
     // https://dom.spec.whatwg.org/#concept-mo-callback
@@ -81,6 +82,7 @@ public:
 
 protected:
     RegisteredObserver(MutationObserver& observer, MutationObserverInit const& options);
+
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
@@ -91,6 +93,7 @@ private:
 // https://dom.spec.whatwg.org/#transient-registered-observer
 class TransientRegisteredObserver final : public RegisteredObserver {
     JS_CELL(TransientRegisteredObserver, RegisteredObserver);
+    JS_DECLARE_ALLOCATOR(TransientRegisteredObserver);
 
 public:
     static JS::NonnullGCPtr<TransientRegisteredObserver> create(MutationObserver&, MutationObserverInit const&, RegisteredObserver& source);
@@ -100,6 +103,7 @@ public:
 
 private:
     TransientRegisteredObserver(MutationObserver& observer, MutationObserverInit const& options, RegisteredObserver& source);
+
     virtual void visit_edges(Cell::Visitor&) override;
 
     JS::NonnullGCPtr<RegisteredObserver> m_source;

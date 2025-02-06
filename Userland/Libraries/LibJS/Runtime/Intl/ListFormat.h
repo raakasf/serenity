@@ -19,6 +19,7 @@ namespace JS::Intl {
 
 class ListFormat final : public Object {
     JS_OBJECT(ListFormat, Object);
+    JS_DECLARE_ALLOCATOR(ListFormat);
 
 public:
     enum class Type {
@@ -54,7 +55,7 @@ using Placeables = HashMap<StringView, Variant<PatternPartition, Vector<PatternP
 Vector<PatternPartition> deconstruct_pattern(StringView pattern, Placeables);
 Vector<PatternPartition> create_parts_from_list(ListFormat const&, Vector<String> const& list);
 String format_list(ListFormat const&, Vector<String> const& list);
-Array* format_list_to_parts(VM&, ListFormat const&, Vector<String> const& list);
+NonnullGCPtr<Array> format_list_to_parts(VM&, ListFormat const&, Vector<String> const& list);
 ThrowCompletionOr<Vector<String>> string_list_from_iterable(VM&, Value iterable);
 
 }

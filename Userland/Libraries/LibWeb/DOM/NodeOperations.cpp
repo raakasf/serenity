@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
+ * Copyright (c) 2023, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Vector.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
@@ -26,15 +27,14 @@ WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> convert_nodes_to_single_node(Vector<
         if (node.has<JS::Handle<Node>>())
             return *node.get<JS::Handle<Node>>();
 
-        return *document.heap().allocate<DOM::Text>(document.realm(), document, node.get<String>());
+        return document.heap().allocate<DOM::Text>(document.realm(), document, node.get<String>());
     };
 
     if (nodes.size() == 1)
         return potentially_convert_string_to_text_node(nodes.first());
 
-    // This is NNGCP<Node> instead of NNGCP<DocumentFragment> to be compatible with the return type.
-    JS::NonnullGCPtr<Node> document_fragment = *document.heap().allocate<DOM::DocumentFragment>(document.realm(), document);
-    for (auto& unconverted_node : nodes) {
+    auto document_fragment = document.heap().allocate<DOM::DocumentFragment>(document.realm(), document);
+    for (auto const& unconverted_node : nodes) {
         auto node = potentially_convert_string_to_text_node(unconverted_node);
         (void)TRY(document_fragment->append_child(node));
     }

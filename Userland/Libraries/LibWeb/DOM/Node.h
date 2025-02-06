@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,12 +7,17 @@
 #pragma once
 
 #include <AK/Badge.h>
+#include <AK/FlyString.h>
+#include <AK/GenericShorthands.h>
 #include <AK/JsonObjectSerializer.h>
 #include <AK/RefPtr.h>
-#include <AK/String.h>
 #include <AK/TypeCasts.h>
 #include <AK/Vector.h>
+#include <LibWeb/DOM/AccessibilityTreeNode.h>
 #include <LibWeb/DOM/EventTarget.h>
+#include <LibWeb/DOM/Slottable.h>
+#include <LibWeb/DOMParsing/XMLSerializer.h>
+#include <LibWeb/TraversalDecision.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
 namespace Web::DOM {
@@ -33,8 +38,51 @@ enum class NodeType : u16 {
     NOTATION_NODE = 12
 };
 
+enum class NameOrDescription {
+    Name,
+    Description
+};
+
 struct GetRootNodeOptions {
     bool composed { false };
+};
+
+enum class FragmentSerializationMode {
+    Inner,
+    Outer,
+};
+
+#define ENUMERATE_STYLE_INVALIDATION_REASONS(X)     \
+    X(AdoptedStyleSheetsList)                       \
+    X(CSSFontLoaded)                                \
+    X(CSSImportRule)                                \
+    X(DidLoseFocus)                                 \
+    X(DidReceiveFocus)                              \
+    X(EditingInsertion)                             \
+    X(ElementAttributeChange)                       \
+    X(ElementSetShadowRoot)                         \
+    X(HTMLInputElementSetChecked)                   \
+    X(HTMLObjectElementUpdateLayoutAndChildObjects) \
+    X(HTMLSelectElementSetIsOpen)                   \
+    X(Hover)                                        \
+    X(MediaQueryChangedMatchState)                  \
+    X(NavigableSetViewportSize)                     \
+    X(NodeInsertBefore)                             \
+    X(NodeRemove)                                   \
+    X(NodeSetTextContent)                           \
+    X(Other)                                        \
+    X(ParentOfInsertedNode)                         \
+    X(SetSelectorText)                              \
+    X(SettingsChange)                               \
+    X(StyleSheetDeleteRule)                         \
+    X(StyleSheetInsertRule)                         \
+    X(StyleSheetListAddSheet)                       \
+    X(StyleSheetListRemoveSheet)
+
+enum class StyleInvalidationReason {
+#define __ENUMERATE_STYLE_INVALIDATION_REASON(reason) reason,
+    ENUMERATE_STYLE_INVALIDATION_REASONS(__ENUMERATE_STYLE_INVALIDATION_REASON)
+#undef __ENUMERATE_STYLE_INVALIDATION_REASON
 };
 
 class Node : public EventTarget {
@@ -44,10 +92,10 @@ public:
     ParentNode* parent_or_shadow_host();
     ParentNode const* parent_or_shadow_host() const { return const_cast<Node*>(this)->parent_or_shadow_host(); }
 
-    virtual ~Node();
+    Element* parent_or_shadow_host_element();
+    Element const* parent_or_shadow_host_element() const { return const_cast<Node*>(this)->parent_or_shadow_host_element(); }
 
-    // FIXME: Move cleanup to the regular destructor.
-    void removed_last_ref();
+    virtual ~Node();
 
     NodeType type() const { return m_type; }
     bool is_element() const { return type() == NodeType::ELEMENT_NODE; }
@@ -55,17 +103,22 @@ public:
     bool is_document() const { return type() == NodeType::DOCUMENT_NODE; }
     bool is_document_type() const { return type() == NodeType::DOCUMENT_TYPE_NODE; }
     bool is_comment() const { return type() == NodeType::COMMENT_NODE; }
-    bool is_character_data() const { return type() == NodeType::TEXT_NODE || type() == NodeType::COMMENT_NODE; }
+    bool is_character_data() const { return first_is_one_of(type(), NodeType::TEXT_NODE, NodeType::COMMENT_NODE, NodeType::CDATA_SECTION_NODE, NodeType::PROCESSING_INSTRUCTION_NODE); }
     bool is_document_fragment() const { return type() == NodeType::DOCUMENT_FRAGMENT_NODE; }
     bool is_parent_node() const { return is_element() || is_document() || is_document_fragment(); }
-    bool is_slottable() const { return is_element() || is_text(); }
+    bool is_slottable() const { return is_element() || is_text() || is_cdata_section(); }
     bool is_attribute() const { return type() == NodeType::ATTRIBUTE_NODE; }
     bool is_cdata_section() const { return type() == NodeType::CDATA_SECTION_NODE; }
     virtual bool is_shadow_root() const { return false; }
 
     virtual bool requires_svg_container() const { return false; }
     virtual bool is_svg_container() const { return false; }
+    virtual bool is_svg_element() const { return false; }
+    virtual bool is_svg_graphics_element() const { return false; }
+    virtual bool is_svg_script_element() const { return false; }
+    virtual bool is_svg_style_element() const { return false; }
     virtual bool is_svg_svg_element() const { return false; }
+    virtual bool is_svg_use_element() const { return false; }
 
     bool in_a_document_tree() const;
 
@@ -74,12 +127,31 @@ public:
 
     virtual bool is_editable() const;
 
+    virtual bool is_dom_node() const final { return true; }
     virtual bool is_html_element() const { return false; }
     virtual bool is_html_html_element() const { return false; }
     virtual bool is_html_anchor_element() const { return false; }
     virtual bool is_html_base_element() const { return false; }
+    virtual bool is_html_body_element() const { return false; }
+    virtual bool is_html_input_element() const { return false; }
+    virtual bool is_html_link_element() const { return false; }
+    virtual bool is_html_progress_element() const { return false; }
+    virtual bool is_html_script_element() const { return false; }
+    virtual bool is_html_style_element() const { return false; }
     virtual bool is_html_template_element() const { return false; }
-    virtual bool is_browsing_context_container() const { return false; }
+    virtual bool is_html_table_element() const { return false; }
+    virtual bool is_html_table_section_element() const { return false; }
+    virtual bool is_html_table_row_element() const { return false; }
+    virtual bool is_html_table_cell_element() const { return false; }
+    virtual bool is_html_br_element() const { return false; }
+    virtual bool is_html_button_element() const { return false; }
+    virtual bool is_html_slot_element() const { return false; }
+    virtual bool is_html_embed_element() const { return false; }
+    virtual bool is_html_object_element() const { return false; }
+    virtual bool is_html_form_element() const { return false; }
+    virtual bool is_html_image_element() const { return false; }
+    virtual bool is_navigable_container() const { return false; }
+    virtual bool is_lazy_loading() const { return false; }
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> pre_insert(JS::NonnullGCPtr<Node>, JS::GCPtr<Node>);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> pre_remove(JS::NonnullGCPtr<Node>);
@@ -90,11 +162,22 @@ public:
     void insert_before(JS::NonnullGCPtr<Node> node, JS::GCPtr<Node> child, bool suppress_observers = false);
     void remove(bool suppress_observers = false);
     void remove_all_children(bool suppress_observers = false);
+
+    enum DocumentPosition : u16 {
+        DOCUMENT_POSITION_EQUAL = 0,
+        DOCUMENT_POSITION_DISCONNECTED = 1,
+        DOCUMENT_POSITION_PRECEDING = 2,
+        DOCUMENT_POSITION_FOLLOWING = 4,
+        DOCUMENT_POSITION_CONTAINS = 8,
+        DOCUMENT_POSITION_CONTAINED_BY = 16,
+        DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC = 32,
+    };
+
     u16 compare_document_position(JS::GCPtr<Node> other);
 
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> replace_child(JS::NonnullGCPtr<Node> node, JS::NonnullGCPtr<Node> child);
 
-    JS::NonnullGCPtr<Node> clone_node(Document* document = nullptr, bool clone_children = false);
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> clone_node(Document* document = nullptr, bool clone_children = false);
     WebIDL::ExceptionOr<JS::NonnullGCPtr<Node>> clone_node_binding(bool deep);
 
     // NOTE: This is intended for the JS bindings.
@@ -107,11 +190,15 @@ public:
     String base_uri() const;
 
     String descendant_text_content() const;
-    String text_content() const;
-    void set_text_content(String const&);
+    Optional<String> text_content() const;
+    void set_text_content(Optional<String> const&);
 
-    String node_value() const;
-    void set_node_value(String const&);
+    WebIDL::ExceptionOr<void> normalize();
+
+    Optional<String> node_value() const;
+    void set_node_value(Optional<String> const&);
+
+    JS::GCPtr<HTML::Navigable> navigable() const;
 
     Document& document() { return *m_document; }
     Document const& document() const { return *m_document; }
@@ -138,6 +225,8 @@ public:
 
     bool is_connected() const;
 
+    [[nodiscard]] bool is_browsing_context_connected() const;
+
     Node* parent_node() { return parent(); }
     Node const* parent_node() const { return parent(); }
 
@@ -145,19 +234,23 @@ public:
     Element const* parent_element() const;
 
     virtual void inserted();
-    virtual void removed_from(Node*) { }
+    virtual void removed_from(Node*);
     virtual void children_changed() { }
     virtual void adopted_from(Document&) { }
-    virtual void cloned(Node&, bool) {};
+    virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) { return {}; }
 
     Layout::Node const* layout_node() const { return m_layout_node; }
     Layout::Node* layout_node() { return m_layout_node; }
 
-    Painting::PaintableBox const* paint_box() const;
+    Painting::PaintableBox const* paintable_box() const;
+    Painting::PaintableBox* paintable_box();
     Painting::Paintable const* paintable() const;
+    Painting::Paintable* paintable();
+
+    void set_paintable(JS::GCPtr<Painting::Paintable>);
 
     void set_layout_node(Badge<Layout::Node>, JS::NonnullGCPtr<Layout::Node>);
-    void detach_layout_node(Badge<DOM::Document>);
+    void detach_layout_node(Badge<Layout::TreeBuilder>);
 
     virtual bool is_child_allowed(Node const&) const { return true; }
 
@@ -167,7 +260,7 @@ public:
     bool child_needs_style_update() const { return m_child_needs_style_update; }
     void set_child_needs_style_update(bool b) { m_child_needs_style_update = b; }
 
-    void invalidate_style();
+    void invalidate_style(StyleInvalidationReason);
 
     void set_document(Badge<Document>, Document&);
 
@@ -193,10 +286,12 @@ public:
     bool is_shadow_including_ancestor_of(Node const&) const;
     bool is_shadow_including_inclusive_ancestor_of(Node const&) const;
 
-    i32 id() const { return m_id; }
-    static Node* from_id(i32 node_id);
+    i32 unique_id() const { return m_unique_id; }
+    static Node* from_unique_id(i32);
 
-    String serialize_fragment() const;
+    WebIDL::ExceptionOr<String> serialize_fragment(DOMParsing::RequireWellFormed, FragmentSerializationMode = FragmentSerializationMode::Inner) const;
+
+    WebIDL::ExceptionOr<void> unsafely_set_html(Element&, StringView);
 
     void replace_all(JS::GCPtr<Node>);
     void string_replace_all(String const&);
@@ -212,16 +307,22 @@ public:
 
     size_t length() const;
 
-    auto& registered_observers_list() { return m_registered_observer_list; }
-    auto const& registered_observers_list() const { return m_registered_observer_list; }
+    auto& registered_observer_list() { return m_registered_observer_list; }
+    auto const& registered_observer_list() const { return m_registered_observer_list; }
 
-    void add_registered_observer(RegisteredObserver& registered_observer) { m_registered_observer_list.append(registered_observer); }
+    void add_registered_observer(RegisteredObserver&);
 
-    void queue_mutation_record(FlyString const& type, String attribute_name, String attribute_namespace, String old_value, JS::NonnullGCPtr<NodeList> added_nodes, JS::NonnullGCPtr<NodeList> removed_nodes, Node* previous_sibling, Node* next_sibling);
+    void queue_mutation_record(FlyString const& type, Optional<FlyString> const& attribute_name, Optional<FlyString> const& attribute_namespace, Optional<String> const& old_value, Vector<JS::Handle<Node>> added_nodes, Vector<JS::Handle<Node>> removed_nodes, Node* previous_sibling, Node* next_sibling) const;
+
+    // https://dom.spec.whatwg.org/#concept-shadow-including-inclusive-descendant
+    template<typename Callback>
+    TraversalDecision for_each_shadow_including_inclusive_descendant(Callback);
 
     // https://dom.spec.whatwg.org/#concept-shadow-including-descendant
     template<typename Callback>
-    IterationDecision for_each_shadow_including_descendant(Callback);
+    TraversalDecision for_each_shadow_including_descendant(Callback);
+
+    Slottable as_slottable();
 
     Node* parent() { return m_parent.ptr(); }
     Node const* parent() const { return m_parent.ptr(); }
@@ -270,47 +371,12 @@ public:
         return index;
     }
 
-    Optional<size_t> index_of_child(Node const& search_child)
-    {
-        VERIFY(search_child.parent() == this);
-        size_t index = 0;
-        auto* child = first_child();
-        VERIFY(child);
-
-        do {
-            if (child == &search_child)
-                return index;
-            index++;
-        } while (child && (child = child->next_sibling()));
-        return {};
-    }
-
-    template<typename ChildType>
-    Optional<size_t> index_of_child(Node const& search_child)
-    {
-        VERIFY(search_child.parent() == this);
-        size_t index = 0;
-        auto* child = first_child();
-        VERIFY(child);
-
-        do {
-            if (!is<ChildType>(child))
-                continue;
-            if (child == &search_child)
-                return index;
-            index++;
-        } while (child && (child = child->next_sibling()));
-        return {};
-    }
-
     bool is_ancestor_of(Node const&) const;
     bool is_inclusive_ancestor_of(Node const&) const;
     bool is_descendant_of(Node const&) const;
     bool is_inclusive_descendant_of(Node const&) const;
 
     bool is_following(Node const&) const;
-
-    void prepend_child(JS::NonnullGCPtr<Node> node);
 
     Node* next_in_pre_order()
     {
@@ -403,116 +469,120 @@ public:
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback) const
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback) const
     {
-        if (callback(static_cast<Node const&>(*this)) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (auto decision = callback(static_cast<Node const&>(*this)); decision != TraversalDecision::Continue)
+            return decision;
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_inclusive_subtree(Callback callback)
+    TraversalDecision for_each_in_inclusive_subtree(Callback callback)
     {
-        if (callback(static_cast<Node&>(*this)) == IterationDecision::Break)
-            return IterationDecision::Break;
+        if (auto decision = callback(static_cast<Node&>(*this)); decision != TraversalDecision::Continue)
+            return decision;
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_inclusive_subtree_of_type(Callback callback)
+    TraversalDecision for_each_in_inclusive_subtree_of_type(Callback callback)
+    {
+        if (is<U>(static_cast<Node&>(*this))) {
+            if (auto decision = callback(static_cast<U&>(*this)); decision != TraversalDecision::Continue)
+                return decision;
+        }
+        for (auto* child = first_child(); child; child = child->next_sibling()) {
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
+        }
+        return TraversalDecision::Continue;
+    }
+
+    template<typename U, typename Callback>
+    TraversalDecision for_each_in_inclusive_subtree_of_type(Callback callback) const
     {
         if (is<U>(static_cast<Node const&>(*this))) {
-            if (callback(static_cast<U&>(*this)) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (auto decision = callback(static_cast<U const&>(*this)); decision != TraversalDecision::Continue)
+                return decision;
         }
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
-    }
-
-    template<typename U, typename Callback>
-    IterationDecision for_each_in_inclusive_subtree_of_type(Callback callback) const
-    {
-        if (is<U>(static_cast<Node const&>(*this))) {
-            if (callback(static_cast<U const&>(*this)) == IterationDecision::Break)
-                return IterationDecision::Break;
-        }
-        for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
-        }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback) const
+    TraversalDecision for_each_in_subtree(Callback callback) const
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
-    IterationDecision for_each_in_subtree(Callback callback)
+    TraversalDecision for_each_in_subtree(Callback callback)
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->for_each_in_inclusive_subtree(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->for_each_in_inclusive_subtree(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_subtree_of_type(Callback callback)
+    TraversalDecision for_each_in_subtree_of_type(Callback callback)
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename U, typename Callback>
-    IterationDecision for_each_in_subtree_of_type(Callback callback) const
+    TraversalDecision for_each_in_subtree_of_type(Callback callback) const
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
-            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == IterationDecision::Break)
-                return IterationDecision::Break;
+            if (child->template for_each_in_inclusive_subtree_of_type<U>(callback) == TraversalDecision::Break)
+                return TraversalDecision::Break;
         }
-        return IterationDecision::Continue;
+        return TraversalDecision::Continue;
     }
 
     template<typename Callback>
     void for_each_child(Callback callback) const
     {
-        return const_cast<Node*>(this)->template for_each_child(move(callback));
+        return const_cast<Node*>(this)->for_each_child(move(callback));
     }
 
     template<typename Callback>
     void for_each_child(Callback callback)
     {
-        for (auto* node = first_child(); node; node = node->next_sibling())
-            callback(*node);
+        for (auto* node = first_child(); node; node = node->next_sibling()) {
+            if (callback(*node) == IterationDecision::Break)
+                return;
+        }
     }
 
     template<typename U, typename Callback>
     void for_each_child_of_type(Callback callback)
     {
         for (auto* node = first_child(); node; node = node->next_sibling()) {
-            if (is<U>(node))
-                callback(verify_cast<U>(*node));
+            if (is<U>(node)) {
+                if (callback(verify_cast<U>(*node)) == IterationDecision::Break)
+                    return;
+            }
         }
     }
 
@@ -608,6 +678,15 @@ public:
         return nullptr;
     }
 
+    template<typename U>
+    U const* shadow_including_first_ancestor_of_type() const
+    {
+        return const_cast<Node*>(this)->template shadow_including_first_ancestor_of_type<U>();
+    }
+
+    template<typename U>
+    U* shadow_including_first_ancestor_of_type();
+
     bool is_parent_of(Node const& other) const
     {
         for (auto* child = first_child(); child; child = child->next_sibling()) {
@@ -616,6 +695,14 @@ public:
         }
         return false;
     }
+
+    ErrorOr<String> accessible_name(Document const&) const;
+    ErrorOr<String> accessible_description(Document const&) const;
+
+    Optional<String> locate_a_namespace(Optional<String> const& prefix) const;
+    Optional<String> lookup_namespace_uri(Optional<String> prefix) const;
+    Optional<String> lookup_prefix(Optional<String> namespace_) const;
+    bool is_default_namespace(Optional<String> namespace_) const;
 
 protected:
     Node(JS::Realm&, Document&, NodeType);
@@ -626,22 +713,33 @@ protected:
 
     JS::GCPtr<Document> m_document;
     JS::GCPtr<Layout::Node> m_layout_node;
+    JS::GCPtr<Painting::Paintable> m_paintable;
     NodeType m_type { NodeType::INVALID };
     bool m_needs_style_update { false };
     bool m_child_needs_style_update { false };
 
-    i32 m_id;
+    i32 m_unique_id {};
 
     // https://dom.spec.whatwg.org/#registered-observer-list
     // "Nodes have a strong reference to registered observers in their registered observer list." https://dom.spec.whatwg.org/#garbage-collection
-    Vector<RegisteredObserver&> m_registered_observer_list;
+    OwnPtr<Vector<JS::NonnullGCPtr<RegisteredObserver>>> m_registered_observer_list;
+
+    void build_accessibility_tree(AccessibilityTreeNode& parent);
+
+    ErrorOr<String> name_or_description(NameOrDescription, Document const&, HashTable<i32>&) const;
 
 private:
-    void queue_tree_mutation_record(JS::NonnullGCPtr<NodeList> added_nodes, JS::NonnullGCPtr<NodeList> removed_nodes, Node* previous_sibling, Node* next_sibling);
+    void queue_tree_mutation_record(Vector<JS::Handle<Node>> added_nodes, Vector<JS::Handle<Node>> removed_nodes, Node* previous_sibling, Node* next_sibling);
 
     void insert_before_impl(JS::NonnullGCPtr<Node>, JS::GCPtr<Node> child);
     void append_child_impl(JS::NonnullGCPtr<Node>);
     void remove_child_impl(JS::NonnullGCPtr<Node>);
+
+    static Optional<StringView> first_valid_id(StringView, Document const&);
+    static ErrorOr<void> append_without_space(StringBuilder, StringView const&);
+    static ErrorOr<void> append_with_space(StringBuilder, StringView const&);
+    static ErrorOr<void> prepend_without_space(StringBuilder, StringView const&);
+    static ErrorOr<void> prepend_with_space(StringBuilder, StringView const&);
 
     JS::GCPtr<Node> m_parent;
     JS::GCPtr<Node> m_first_child;
@@ -653,3 +751,6 @@ private:
 };
 
 }
+
+template<>
+inline bool JS::Object::fast_is<Web::DOM::Node>() const { return is_dom_node(); }

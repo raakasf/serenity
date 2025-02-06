@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2022, Idan Horowitz <idan.horowitz@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,15 +15,17 @@
 
 namespace JS::Intl {
 
+JS_DEFINE_ALLOCATOR(SegmenterConstructor);
+
 // 18.1 The Intl.Segmenter Constructor, https://tc39.es/ecma402/#sec-intl-segmenter-constructor
 SegmenterConstructor::SegmenterConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.Segmenter.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.Segmenter.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void SegmenterConstructor::initialize(Realm& realm)
 {
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     auto& vm = this->vm();
 
@@ -42,7 +45,7 @@ ThrowCompletionOr<Value> SegmenterConstructor::call()
 }
 
 // 18.1.1 Intl.Segmenter ( [ locales [ , options ] ] ), https://tc39.es/ecma402/#sec-intl.segmenter
-ThrowCompletionOr<Object*> SegmenterConstructor::construct(FunctionObject& new_target)
+ThrowCompletionOr<NonnullGCPtr<Object>> SegmenterConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
@@ -51,7 +54,7 @@ ThrowCompletionOr<Object*> SegmenterConstructor::construct(FunctionObject& new_t
 
     // 2. Let internalSlotsList be « [[InitializedSegmenter]], [[Locale]], [[SegmenterGranularity]] ».
     // 3. Let segmenter be ? OrdinaryCreateFromConstructor(NewTarget, "%Segmenter.prototype%", internalSlotsList).
-    auto* segmenter = TRY(ordinary_create_from_constructor<Segmenter>(vm, new_target, &Intrinsics::intl_segmenter_prototype));
+    auto segmenter = TRY(ordinary_create_from_constructor<Segmenter>(vm, new_target, &Intrinsics::intl_segmenter_prototype));
 
     // 4. Let requestedLocales be ? CanonicalizeLocaleList(locales).
     auto requested_locales = TRY(canonicalize_locale_list(vm, locales));
@@ -62,27 +65,28 @@ ThrowCompletionOr<Object*> SegmenterConstructor::construct(FunctionObject& new_t
     // 6. Let opt be a new Record.
     LocaleOptions opt {};
 
-    // 7. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+    // 7. Let matcher be ? GetOption(options, "localeMatcher", string, « "lookup", "best fit" », "best fit").
     auto matcher = TRY(get_option(vm, *options, vm.names.localeMatcher, OptionType::String, { "lookup"sv, "best fit"sv }, "best fit"sv));
 
     // 8. Set opt.[[localeMatcher]] to matcher.
     opt.locale_matcher = matcher;
 
-    // 9. Let localeData be %Segmenter%.[[LocaleData]].
-
-    // 10. Let r be ResolveLocale(%Segmenter%.[[AvailableLocales]], requestedLocales, opt, %Segmenter%.[[RelevantExtensionKeys]], localeData).
+    // 9. Let r be ResolveLocale(%Intl.Segmenter%.[[AvailableLocales]], requestedLocales, opt, %Intl.Segmenter%.[[RelevantExtensionKeys]], %Intl.Segmenter%.[[LocaleData]]).
     auto result = resolve_locale(requested_locales, opt, {});
 
-    // 11. Set segmenter.[[Locale]] to r.[[locale]].
+    // 10. Set segmenter.[[Locale]] to r.[[locale]].
     segmenter->set_locale(move(result.locale));
 
-    // 12. Let granularity be ? GetOption(options, "granularity", "string", « "grapheme", "word", "sentence" », "grapheme").
+    // 11. Let granularity be ? GetOption(options, "granularity", string, « "grapheme", "word", "sentence" », "grapheme").
     auto granularity = TRY(get_option(vm, *options, vm.names.granularity, OptionType::String, { "grapheme"sv, "word"sv, "sentence"sv }, "grapheme"sv));
 
-    // 13. Set segmenter.[[SegmenterGranularity]] to granularity.
-    segmenter->set_segmenter_granularity(granularity.as_string().string());
+    // 12. Set segmenter.[[SegmenterGranularity]] to granularity.
+    segmenter->set_segmenter_granularity(granularity.as_string().utf8_string_view());
 
-    // 14. Return segmenter.
+    auto locale_segmenter = ::Locale::Segmenter::create(segmenter->locale(), segmenter->segmenter_granularity());
+    segmenter->set_segmenter(move(locale_segmenter));
+
+    // 13. Return segmenter.
     return segmenter;
 }
 

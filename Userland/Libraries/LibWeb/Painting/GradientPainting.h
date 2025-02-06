@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
+ * Copyright (c) 2023, MacDue <macdue@dueutil.tech>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,27 +9,15 @@
 #include <AK/Span.h>
 #include <AK/Vector.h>
 #include <LibGfx/Color.h>
+#include <LibGfx/Gradients.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/Painting/GradientData.h>
 #include <LibWeb/Painting/PaintContext.h>
 
 namespace Web::Painting {
 
-struct ColorStop {
-    Gfx::Color color;
-    float position = AK::NaN<float>;
-    Optional<float> transition_hint = {};
-};
-
-using ColorStopList = Vector<ColorStop, 4>;
-
-struct LinearGradientData {
-    float gradient_angle;
-    ColorStopList color_stops;
-    Optional<float> repeat_length;
-};
-
-LinearGradientData resolve_linear_gradient_data(Layout::Node const&, Gfx::FloatSize const&, CSS::LinearGradientStyleValue const&);
-
-void paint_linear_gradient(PaintContext&, Gfx::IntRect const&, LinearGradientData const&);
+LinearGradientData resolve_linear_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const&, CSSPixelSize, CSS::LinearGradientStyleValue const&);
+ConicGradientData resolve_conic_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const&, CSS::ConicGradientStyleValue const&);
+RadialGradientData resolve_radial_gradient_data(Layout::NodeWithStyleAndBoxModelMetrics const&, CSSPixelSize, CSS::RadialGradientStyleValue const&);
 
 }

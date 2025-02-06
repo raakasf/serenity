@@ -33,32 +33,43 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     StringView path;
     StringView dotted_key;
-    int spaces_in_indent = 4;
+    StringView colorize_output_option = "auto"sv;
+    u32 spaces_in_indent = 4;
 
     Core::ArgsParser args_parser;
     args_parser.set_general_help("Pretty-print a JSON file with syntax-coloring and indentation.");
     args_parser.add_option(dotted_key, "Dotted query key", "query", 'q', "foo.*.bar");
     args_parser.add_option(spaces_in_indent, "Indent size", "indent-size", 'i', "spaces_in_indent");
+    args_parser.add_option(colorize_output_option, "Choose when to color the output. Valid options are 'always', 'never', or 'auto' (default)", nullptr, 'R', "when");
     args_parser.add_positional_argument(path, "Path to JSON file", "path", Core::ArgsParser::Required::No);
-    VERIFY(spaces_in_indent >= 0);
     args_parser.parse(arguments);
 
-    RefPtr<Core::File> file;
-    if (path == nullptr)
-        file = Core::File::standard_input();
-    else
-        file = TRY(Core::File::open(path, Core::OpenMode::ReadOnly));
+    auto file = TRY(Core::File::open_file_or_standard_stream(path, Core::File::OpenMode::Read));
 
     TRY(Core::System::pledge("stdio"));
 
-    auto file_contents = file->read_all();
+    auto file_contents = TRY(file->read_until_eof());
     auto json = TRY(JsonValue::from_string(file_contents));
     if (!dotted_key.is_empty()) {
         auto key_parts = dotted_key.split_view('.');
         json = query(json, key_parts);
     }
 
-    print(json, spaces_in_indent, 0, isatty(STDOUT_FILENO));
+    bool colorize_output = false;
+    if (!colorize_output_option.is_null()) {
+        if (colorize_output_option == "always") {
+            colorize_output = true;
+        } else if (colorize_output_option == "auto") {
+            colorize_output = TRY(Core::System::isatty(STDOUT_FILENO));
+        } else if (colorize_output_option == "never") {
+            colorize_output = false;
+        } else {
+            warnln("Unknown value '{}' for -R, should be one of 'always', 'never', or 'auto' (default)", colorize_output_option);
+            return 1;
+        }
+    }
+
+    print(json, spaces_in_indent, 0, colorize_output);
     outln();
 
     return 0;
@@ -112,11 +123,7 @@ void print(JsonValue const& value, int spaces_per_indent, int indent, bool use_c
         else if (value.is_null())
             out("\033[34;1m");
     }
-    if (value.is_string())
-        out("\"");
-    out("{}", value.to_string());
-    if (value.is_string())
-        out("\"");
+    out("{}", value);
     if (use_color)
         out("\033[0m");
 }
@@ -143,9 +150,9 @@ JsonValue query(JsonValue const& value, Vector<StringView>& key_parts, size_t ke
 
     JsonValue result {};
     if (value.is_object()) {
-        result = value.as_object().get(key);
+        result = value.as_object().get(key).value_or({});
     } else if (value.is_array()) {
-        auto key_as_index = key.to_int();
+        auto key_as_index = key.to_number<int>();
         if (key_as_index.has_value())
             result = value.as_array().at(key_as_index.value());
     }

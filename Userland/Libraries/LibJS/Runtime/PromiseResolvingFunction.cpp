@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,9 +11,12 @@
 
 namespace JS {
 
-PromiseResolvingFunction* PromiseResolvingFunction::create(Realm& realm, Promise& promise, AlreadyResolved& already_resolved, FunctionType function)
+JS_DEFINE_ALLOCATOR(AlreadyResolved);
+JS_DEFINE_ALLOCATOR(PromiseResolvingFunction);
+
+NonnullGCPtr<PromiseResolvingFunction> PromiseResolvingFunction::create(Realm& realm, Promise& promise, AlreadyResolved& already_resolved, FunctionType function)
 {
-    return realm.heap().allocate<PromiseResolvingFunction>(realm, promise, already_resolved, move(function), *realm.intrinsics().function_prototype());
+    return realm.heap().allocate<PromiseResolvingFunction>(realm, promise, already_resolved, move(function), realm.intrinsics().function_prototype());
 }
 
 PromiseResolvingFunction::PromiseResolvingFunction(Promise& promise, AlreadyResolved& already_resolved, FunctionType native_function, Object& prototype)
@@ -38,8 +41,8 @@ ThrowCompletionOr<Value> PromiseResolvingFunction::call()
 void PromiseResolvingFunction::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_promise);
-    visitor.visit(&m_already_resolved);
+    visitor.visit(m_promise);
+    visitor.visit(m_already_resolved);
 }
 
 }

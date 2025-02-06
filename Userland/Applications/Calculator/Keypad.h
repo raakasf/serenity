@@ -21,19 +21,22 @@ public:
     Keypad() = default;
     ~Keypad() = default;
 
-    unsigned type_digit(int digit);
+    void type_digit(int digit);
     void type_decimal_point();
     void type_backspace();
 
     Crypto::BigFraction value() const;
     void set_value(Crypto::BigFraction);
+    void set_typed_value(Crypto::BigFraction);
     void set_to_0();
 
     void shrink(unsigned);
     void set_rounding_length(unsigned);
     unsigned rounding_length() const;
 
-    String to_string() const;
+    ErrorOr<String> to_string() const;
+
+    bool in_typing_state() const;
 
 private:
     // Internal representation of the current decimal value.
@@ -54,6 +57,7 @@ private:
 
     enum class State {
         External,
+        TypedExternal,
         TypingInteger,
         TypingDecimal
     };

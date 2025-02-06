@@ -13,6 +13,7 @@ namespace JS {
 
 class DatePrototype final : public PrototypeObject<DatePrototype, Date> {
     JS_PROTOTYPE_OBJECT(DatePrototype, Date, Date);
+    JS_DECLARE_ALLOCATOR(DatePrototype);
 
 public:
     virtual void initialize(Realm&) override;
@@ -73,9 +74,9 @@ private:
 };
 
 ThrowCompletionOr<double> this_time_value(VM&, Value value);
-String time_string(double time);
-String date_string(double time);
-String time_zone_string(double time);
-String to_date_string(double time);
+ByteString time_string(double time);
+ByteString date_string(double time);
+ByteString time_zone_string(double time);
+ByteString to_date_string(double time);
 
 }

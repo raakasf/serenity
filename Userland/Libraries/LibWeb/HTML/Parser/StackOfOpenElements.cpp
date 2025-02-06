@@ -10,14 +10,13 @@
 
 namespace Web::HTML {
 
-static Vector<FlyString> s_base_list { "applet", "caption", "html", "table", "td", "th", "marquee", "object", "template" };
+static Vector<FlyString> s_base_list { "applet"_fly_string, "caption"_fly_string, "html"_fly_string, "table"_fly_string, "td"_fly_string, "th"_fly_string, "marquee"_fly_string, "object"_fly_string, "template"_fly_string };
 
 StackOfOpenElements::~StackOfOpenElements() = default;
 
 void StackOfOpenElements::visit_edges(JS::Cell::Visitor& visitor)
 {
-    for (auto& element : m_elements)
-        visitor.visit(element);
+    visitor.visit(m_elements);
 }
 
 bool StackOfOpenElements::has_in_scope_impl(FlyString const& tag_name, Vector<FlyString> const& list) const
@@ -55,20 +54,20 @@ bool StackOfOpenElements::has_in_scope(const DOM::Element& target_node) const
 bool StackOfOpenElements::has_in_button_scope(FlyString const& tag_name) const
 {
     auto list = s_base_list;
-    list.append("button");
+    list.append("button"_fly_string);
     return has_in_scope_impl(tag_name, list);
 }
 
 bool StackOfOpenElements::has_in_table_scope(FlyString const& tag_name) const
 {
-    return has_in_scope_impl(tag_name, { "html", "table", "template" });
+    return has_in_scope_impl(tag_name, { "html"_fly_string, "table"_fly_string, "template"_fly_string });
 }
 
 bool StackOfOpenElements::has_in_list_item_scope(FlyString const& tag_name) const
 {
     auto list = s_base_list;
-    list.append("ol");
-    list.append("ul");
+    list.append("ol"_fly_string);
+    list.append("ul"_fly_string);
     return has_in_scope_impl(tag_name, list);
 }
 
@@ -128,7 +127,7 @@ JS::GCPtr<DOM::Element> StackOfOpenElements::topmost_special_node_below(DOM::Ele
     for (auto& element : m_elements.in_reverse()) {
         if (element.ptr() == &formatting_element)
             break;
-        if (HTMLParser::is_special_tag(element->local_name(), element->namespace_()))
+        if (HTMLParser::is_special_tag(element->local_name(), element->namespace_uri()))
             found_element = element.ptr();
     }
     return found_element.ptr();

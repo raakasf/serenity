@@ -7,7 +7,6 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/Debug.h>
 #include <AK/NumericLimits.h>
 #include <LibGL/GLContext.h>
 
@@ -90,16 +89,11 @@ void GLContext::gl_array_element(GLint i)
     }
 }
 
-void GLContext::gl_color(GLdouble r, GLdouble g, GLdouble b, GLdouble a)
+void GLContext::gl_color(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 {
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_color, r, g, b, a);
 
-    m_current_vertex_color = {
-        static_cast<float>(r),
-        static_cast<float>(g),
-        static_cast<float>(b),
-        static_cast<float>(a),
-    };
+    m_current_vertex_color = { r, g, b, a };
 }
 
 void GLContext::gl_color_pointer(GLint size, GLenum type, GLsizei stride, void const* pointer)
@@ -117,7 +111,12 @@ void GLContext::gl_color_pointer(GLint size, GLenum type, GLsizei stride, void c
         GL_INVALID_ENUM);
     RETURN_WITH_ERROR_IF(stride < 0, GL_INVALID_VALUE);
 
-    m_client_color_pointer = { .size = size, .type = type, .normalize = true, .stride = stride, .pointer = pointer };
+    void const* data_pointer = pointer;
+    if (m_array_buffer) {
+        size_t data_offset = reinterpret_cast<size_t>(pointer);
+        data_pointer = m_array_buffer->offset_data(data_offset);
+    }
+    m_client_color_pointer = { .size = size, .type = type, .normalize = true, .stride = stride, .pointer = data_pointer };
 }
 
 void GLContext::gl_draw_arrays(GLenum mode, GLint first, GLsizei count)
@@ -191,18 +190,24 @@ void GLContext::gl_draw_elements(GLenum mode, GLsizei count, GLenum type, void c
 
     RETURN_WITH_ERROR_IF(count < 0, GL_INVALID_VALUE);
 
+    void const* index_data = indices;
+    if (m_element_array_buffer) {
+        size_t data_offset = reinterpret_cast<size_t>(indices);
+        index_data = m_element_array_buffer->offset_data(data_offset);
+    }
+
     gl_begin(mode);
     for (int index = 0; index < count; index++) {
         int i = 0;
         switch (type) {
         case GL_UNSIGNED_BYTE:
-            i = reinterpret_cast<GLubyte const*>(indices)[index];
+            i = reinterpret_cast<GLubyte const*>(index_data)[index];
             break;
         case GL_UNSIGNED_SHORT:
-            i = reinterpret_cast<GLushort const*>(indices)[index];
+            i = reinterpret_cast<GLushort const*>(index_data)[index];
             break;
         case GL_UNSIGNED_INT:
-            i = reinterpret_cast<GLuint const*>(indices)[index];
+            i = reinterpret_cast<GLuint const*>(index_data)[index];
             break;
         }
 
@@ -253,7 +258,12 @@ void GLContext::gl_normal_pointer(GLenum type, GLsizei stride, void const* point
         GL_INVALID_ENUM);
     RETURN_WITH_ERROR_IF(stride < 0, GL_INVALID_VALUE);
 
-    m_client_normal_pointer = { .size = 3, .type = type, .normalize = true, .stride = stride, .pointer = pointer };
+    void const* data_pointer = pointer;
+    if (m_array_buffer) {
+        size_t data_offset = reinterpret_cast<size_t>(pointer);
+        data_pointer = m_array_buffer->offset_data(data_offset);
+    }
+    m_client_normal_pointer = { .size = 3, .type = type, .normalize = true, .stride = stride, .pointer = data_pointer };
 }
 
 void GLContext::gl_tex_coord_pointer(GLint size, GLenum type, GLsizei stride, void const* pointer)
@@ -264,22 +274,31 @@ void GLContext::gl_tex_coord_pointer(GLint size, GLenum type, GLsizei stride, vo
     RETURN_WITH_ERROR_IF(stride < 0, GL_INVALID_VALUE);
 
     auto& tex_coord_pointer = m_client_tex_coord_pointer[m_client_active_texture];
-    tex_coord_pointer = { .size = size, .type = type, .normalize = false, .stride = stride, .pointer = pointer };
+
+    void const* data_pointer = pointer;
+    if (m_array_buffer) {
+        size_t data_offset = reinterpret_cast<size_t>(pointer);
+        data_pointer = m_array_buffer->offset_data(data_offset);
+    }
+    tex_coord_pointer = { .size = size, .type = type, .normalize = false, .stride = stride, .pointer = data_pointer };
 }
 
-void GLContext::gl_vertex(GLdouble x, GLdouble y, GLdouble z, GLdouble w)
+void GLContext::gl_vertex(GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
     APPEND_TO_CALL_LIST_AND_RETURN_IF_NEEDED(gl_vertex, x, y, z, w);
 
     GPU::Vertex vertex;
 
-    vertex.position = { static_cast<float>(x), static_cast<float>(y), static_cast<float>(z), static_cast<float>(w) };
+    vertex.position = { x, y, z, w };
     vertex.color = m_current_vertex_color;
     for (size_t i = 0; i < m_device_info.num_texture_units; ++i)
         vertex.tex_coords[i] = m_current_vertex_tex_coord[i];
     vertex.normal = m_current_vertex_normal;
 
-    m_vertex_list.append(vertex);
+    // Optimization: by pulling in the Vector size vs. capacity check, we can always perform an unchecked append
+    if (m_vertex_list.size() == m_vertex_list.capacity())
+        m_vertex_list.grow_capacity(m_vertex_list.size() + 1);
+    m_vertex_list.unchecked_append(vertex);
 }
 
 void GLContext::gl_vertex_pointer(GLint size, GLenum type, GLsizei stride, void const* pointer)
@@ -289,7 +308,12 @@ void GLContext::gl_vertex_pointer(GLint size, GLenum type, GLsizei stride, void 
     RETURN_WITH_ERROR_IF(!(type == GL_SHORT || type == GL_INT || type == GL_FLOAT || type == GL_DOUBLE), GL_INVALID_ENUM);
     RETURN_WITH_ERROR_IF(stride < 0, GL_INVALID_VALUE);
 
-    m_client_vertex_pointer = { .size = size, .type = type, .normalize = false, .stride = stride, .pointer = pointer };
+    void const* data_pointer = pointer;
+    if (m_array_buffer) {
+        size_t data_offset = reinterpret_cast<size_t>(pointer);
+        data_pointer = m_array_buffer->offset_data(data_offset);
+    }
+    m_client_vertex_pointer = { .size = size, .type = type, .normalize = false, .stride = stride, .pointer = data_pointer };
 }
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -126,10 +126,10 @@ static Optional<LanguageID> parse_unicode_language_id(GenericLexer& lexer)
         case ParseState::ParsingLanguageOrScript:
             if (is_unicode_language_subtag(*segment)) {
                 state = ParseState::ParsingScript;
-                language_id.language = *segment;
+                language_id.language = MUST(String::from_utf8(*segment));
             } else if (is_unicode_script_subtag(*segment)) {
                 state = ParseState::ParsingRegion;
-                language_id.script = *segment;
+                language_id.script = MUST(String::from_utf8(*segment));
             } else {
                 return {};
             }
@@ -138,7 +138,7 @@ static Optional<LanguageID> parse_unicode_language_id(GenericLexer& lexer)
         case ParseState::ParsingScript:
             if (is_unicode_script_subtag(*segment)) {
                 state = ParseState::ParsingRegion;
-                language_id.script = *segment;
+                language_id.script = MUST(String::from_utf8(*segment));
                 break;
             }
 
@@ -148,7 +148,7 @@ static Optional<LanguageID> parse_unicode_language_id(GenericLexer& lexer)
         case ParseState::ParsingRegion:
             if (is_unicode_region_subtag(*segment)) {
                 state = ParseState::ParsingVariant;
-                language_id.region = *segment;
+                language_id.region = MUST(String::from_utf8(*segment));
                 break;
             }
 
@@ -157,7 +157,7 @@ static Optional<LanguageID> parse_unicode_language_id(GenericLexer& lexer)
 
         case ParseState::ParsingVariant:
             if (is_unicode_variant_subtag(*segment)) {
-                language_id.variants.append(*segment);
+                language_id.variants.append(MUST(String::from_utf8(*segment)));
             } else {
                 lexer.retreat(segment->length() + 1);
                 state = ParseState::Done;
@@ -199,7 +199,7 @@ static Optional<LocaleExtension> parse_unicode_locale_extension(GenericLexer& le
         switch (state) {
         case ParseState::ParsingAttribute:
             if (is_attribute(*segment)) {
-                locale_extension.attributes.append(*segment);
+                locale_extension.attributes.append(MUST(String::from_utf8(*segment)));
                 break;
             }
 
@@ -208,7 +208,7 @@ static Optional<LocaleExtension> parse_unicode_locale_extension(GenericLexer& le
 
         case ParseState::ParsingKeyword: {
             // keyword = key (sep type)?
-            Keyword keyword { .key = *segment };
+            Keyword keyword { .key = MUST(String::from_utf8(*segment)) };
             Vector<StringView> keyword_values;
 
             if (!is_key(*segment)) {
@@ -231,7 +231,7 @@ static Optional<LocaleExtension> parse_unicode_locale_extension(GenericLexer& le
 
             StringBuilder builder;
             builder.join('-', keyword_values);
-            keyword.value = builder.build();
+            keyword.value = MUST(builder.to_string());
 
             locale_extension.keywords.append(move(keyword));
             break;
@@ -285,7 +285,7 @@ static Optional<TransformedExtension> parse_transformed_extension(GenericLexer& 
 
         case ParseState::ParsingField: {
             // tfield = tkey tvalue;
-            TransformedField field { .key = *segment };
+            TransformedField field { .key = MUST(String::from_utf8(*segment)) };
             Vector<StringView> field_values;
 
             if (!is_transformed_key(*segment)) {
@@ -311,7 +311,7 @@ static Optional<TransformedExtension> parse_transformed_extension(GenericLexer& 
 
             StringBuilder builder;
             builder.join('-', field_values);
-            field.value = builder.build();
+            field.value = MUST(builder.to_string());
 
             transformed_extension.fields.append(move(field));
             break;
@@ -356,7 +356,7 @@ static Optional<OtherExtension> parse_other_extension(char key, GenericLexer& le
 
     StringBuilder builder;
     builder.join('-', other_values);
-    other_extension.value = builder.build();
+    other_extension.value = MUST(builder.to_string());
 
     return other_extension;
 }
@@ -404,7 +404,7 @@ static Vector<String> parse_private_use_extensions(GenericLexer& lexer)
     if (!header.has_value())
         return {};
 
-    auto parse_values = [&]() -> Vector<String> {
+    auto parse_values = [&]() {
         Vector<String> extensions;
 
         while (true) {
@@ -417,7 +417,7 @@ static Vector<String> parse_private_use_extensions(GenericLexer& lexer)
                 break;
             }
 
-            extensions.append(*segment);
+            extensions.append(MUST(String::from_utf8(*segment)));
         }
 
         return extensions;
@@ -483,64 +483,69 @@ static void perform_hard_coded_key_value_substitutions(StringView key, String& v
     // https://github.com/unicode-org/cldr-staging/blob/master/production/common/bcp47/transform.xml
     //
     // There isn't yet a counterpart in the JSON export. See: https://unicode-org.atlassian.net/browse/CLDR-14571
+    Optional<StringView> result;
+
     if (key == "ca"sv) {
         if (value == "islamicc"sv)
-            value = "islamic-civil"sv;
+            result = "islamic-civil"sv;
         else if (value == "ethiopic-amete-alem"sv)
-            value = "ethioaa"sv;
+            result = "ethioaa"sv;
     } else if (key.is_one_of("kb"sv, "kc"sv, "kh"sv, "kk"sv, "kn"sv) && (value == "yes"sv)) {
-        value = "true"sv;
+        result = "true"sv;
     } else if (key == "ks"sv) {
         if (value == "primary"sv)
-            value = "level1"sv;
+            result = "level1"sv;
         else if (value == "tertiary"sv)
-            value = "level3"sv;
+            result = "level3"sv;
         // Note: There are also aliases for "secondary", "quaternary", "quarternary", and "identical",
         // but those are semantically incorrect values (they are too long), so they can be skipped.
     } else if ((key == "m0"sv) && (value == "names"sv)) {
-        value = "prprname"sv;
+        result = "prprname"sv;
     } else if ((key == "ms"sv) && (value == "imperial"sv)) {
-        value = "uksystem"sv;
+        result = "uksystem"sv;
     } else if (key == "tz"sv) {
         // Formatter disabled because this block is easier to read / check against timezone.xml as one-liners.
         // clang-format off
-        if (value == "aqams"sv) value = "nzakl"sv;
-        else if (value == "cnckg"sv) value = "cnsha"sv;
-        else if (value == "cnhrb"sv) value = "cnsha"sv;
-        else if (value == "cnkhg"sv) value = "cnurc"sv;
-        else if (value == "cuba"sv) value = "cuhav"sv;
-        else if (value == "egypt"sv) value = "egcai"sv;
-        else if (value == "eire"sv) value = "iedub"sv;
-        else if (value == "est"sv) value = "utcw05"sv;
-        else if (value == "gmt0"sv) value = "gmt"sv;
-        else if (value == "hongkong"sv) value = "hkhkg"sv;
-        else if (value == "hst"sv) value = "utcw10"sv;
-        else if (value == "iceland"sv) value = "isrey"sv;
-        else if (value == "iran"sv) value = "irthr"sv;
-        else if (value == "israel"sv) value = "jeruslm"sv;
-        else if (value == "jamaica"sv) value = "jmkin"sv;
-        else if (value == "japan"sv) value = "jptyo"sv;
-        else if (value == "kwajalein"sv) value = "mhkwa"sv;
-        else if (value == "libya"sv) value = "lytip"sv;
-        else if (value == "mst"sv) value = "utcw07"sv;
-        else if (value == "navajo"sv) value = "usden"sv;
-        else if (value == "poland"sv) value = "plwaw"sv;
-        else if (value == "portugal"sv) value = "ptlis"sv;
-        else if (value == "prc"sv) value = "cnsha"sv;
-        else if (value == "roc"sv) value = "twtpe"sv;
-        else if (value == "rok"sv) value = "krsel"sv;
-        else if (value == "singapore"sv) value = "sgsin"sv;
-        else if (value == "turkey"sv) value = "trist"sv;
-        else if (value == "uct"sv) value = "utc"sv;
-        else if (value == "usnavajo"sv) value = "usden"sv;
-        else if (value == "zulu"sv) value = "utc"sv;
+        if (value == "aqams"sv) result = "nzakl"sv;
+        else if (value == "cnckg"sv) result = "cnsha"sv;
+        else if (value == "cnhrb"sv) result = "cnsha"sv;
+        else if (value == "cnkhg"sv) result = "cnurc"sv;
+        else if (value == "cuba"sv) result = "cuhav"sv;
+        else if (value == "egypt"sv) result = "egcai"sv;
+        else if (value == "eire"sv) result = "iedub"sv;
+        else if (value == "est"sv) result = "utcw05"sv;
+        else if (value == "gmt0"sv) result = "gmt"sv;
+        else if (value == "hongkong"sv) result = "hkhkg"sv;
+        else if (value == "hst"sv) result = "utcw10"sv;
+        else if (value == "iceland"sv) result = "isrey"sv;
+        else if (value == "iran"sv) result = "irthr"sv;
+        else if (value == "israel"sv) result = "jeruslm"sv;
+        else if (value == "jamaica"sv) result = "jmkin"sv;
+        else if (value == "japan"sv) result = "jptyo"sv;
+        else if (value == "kwajalein"sv) result = "mhkwa"sv;
+        else if (value == "libya"sv) result = "lytip"sv;
+        else if (value == "mst"sv) result = "utcw07"sv;
+        else if (value == "navajo"sv) result = "usden"sv;
+        else if (value == "poland"sv) result = "plwaw"sv;
+        else if (value == "portugal"sv) result = "ptlis"sv;
+        else if (value == "prc"sv) result = "cnsha"sv;
+        else if (value == "roc"sv) result = "twtpe"sv;
+        else if (value == "rok"sv) result = "krsel"sv;
+        else if (value == "singapore"sv) result = "sgsin"sv;
+        else if (value == "turkey"sv) result = "trist"sv;
+        else if (value == "uct"sv) result = "utc"sv;
+        else if (value == "usnavajo"sv) result = "usden"sv;
+        else if (value == "zulu"sv) result = "utc"sv;
         // clang-format on
     }
+
+    if (result.has_value())
+        value = MUST(String::from_utf8(*result));
 }
 
 void canonicalize_unicode_extension_values(StringView key, String& value, bool remove_true)
 {
-    value = value.to_lowercase();
+    value = MUST(value.to_lowercase());
     perform_hard_coded_key_value_substitutions(key, value);
 
     // Note: The spec says to remove "true" type and tfield values but that is believed to be a bug in the spec
@@ -560,7 +565,7 @@ void canonicalize_unicode_extension_values(StringView key, String& value, bool r
             // FIXME: Subdivision subtags do not appear in the CLDR likelySubtags.json file.
             //        Implement the spec's recommendation of using just the first alias for now,
             //        but we should determine if there's anything else needed here.
-            value = aliases[0].to_string();
+            value = MUST(String::from_utf8(aliases[0]));
         }
     }
 }
@@ -568,13 +573,13 @@ void canonicalize_unicode_extension_values(StringView key, String& value, bool r
 static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
 {
     auto canonicalize_language = [&](LanguageID& language_id, bool force_lowercase) {
-        language_id.language = language_id.language->to_lowercase();
+        language_id.language = MUST(language_id.language->to_lowercase());
         if (language_id.script.has_value())
-            language_id.script = language_id.script->to_titlecase();
+            language_id.script = MUST(language_id.script->to_titlecase());
         if (language_id.region.has_value())
-            language_id.region = language_id.region->to_uppercase();
+            language_id.region = MUST(language_id.region->to_uppercase());
         for (auto& variant : language_id.variants)
-            variant = variant.to_lowercase();
+            variant = MUST(variant.to_lowercase());
 
         resolve_complex_language_aliases(language_id);
 
@@ -593,7 +598,7 @@ static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
 
         if (language_id.script.has_value()) {
             if (auto alias = resolve_script_tag_alias(*language_id.script); alias.has_value())
-                language_id.script = move(*alias);
+                language_id.script = MUST(String::from_utf8(*alias));
         }
 
         if (language_id.region.has_value()) {
@@ -604,16 +609,16 @@ static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
         quick_sort(language_id.variants);
 
         for (auto& variant : language_id.variants) {
-            variant = variant.to_lowercase();
+            variant = MUST(variant.to_lowercase());
             if (auto alias = resolve_variant_alias(variant); alias.has_value())
-                variant = move(*alias);
+                variant = MUST(String::from_utf8(*alias));
         }
 
         if (force_lowercase) {
             if (language_id.script.has_value())
-                language_id.script = language_id.script->to_lowercase();
+                language_id.script = MUST(language_id.script->to_lowercase());
             if (language_id.region.has_value())
-                language_id.region = language_id.region->to_lowercase();
+                language_id.region = MUST(language_id.region->to_lowercase());
         }
     };
 
@@ -634,10 +639,10 @@ static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
         extension.visit(
             [&](LocaleExtension& ext) {
                 for (auto& attribute : ext.attributes)
-                    attribute = attribute.to_lowercase();
+                    attribute = MUST(attribute.to_lowercase());
 
                 for (auto& keyword : ext.keywords) {
-                    keyword.key = keyword.key.to_lowercase();
+                    keyword.key = MUST(keyword.key.to_lowercase());
                     canonicalize_unicode_extension_values(keyword.key, keyword.value, true);
                 }
 
@@ -649,7 +654,7 @@ static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
                     canonicalize_language(*ext.language, true);
 
                 for (auto& field : ext.fields) {
-                    field.key = field.key.to_lowercase();
+                    field.key = MUST(field.key.to_lowercase());
                     canonicalize_unicode_extension_values(field.key, field.value, false);
                 }
 
@@ -657,12 +662,12 @@ static void transform_unicode_locale_id_to_canonical_syntax(LocaleID& locale_id)
             },
             [&](OtherExtension& ext) {
                 ext.key = static_cast<char>(to_ascii_lowercase(ext.key));
-                ext.value = ext.value.to_lowercase();
+                ext.value = MUST(ext.value.to_lowercase());
             });
     }
 
     for (auto& extension : locale_id.private_use_extensions)
-        extension = extension.to_lowercase();
+        extension = MUST(extension.to_lowercase());
 }
 
 Optional<String> canonicalize_unicode_locale_id(LocaleID& locale_id)
@@ -681,7 +686,7 @@ Optional<String> canonicalize_unicode_locale_id(LocaleID& locale_id)
 
     transform_unicode_locale_id_to_canonical_syntax(locale_id);
 
-    builder.append(locale_id.language_id.language->to_lowercase());
+    builder.append(MUST(locale_id.language_id.language->to_lowercase()));
     append_sep_and_string(locale_id.language_id.script);
     append_sep_and_string(locale_id.language_id.region);
     for (auto const& variant : locale_id.language_id.variants)
@@ -727,13 +732,12 @@ Optional<String> canonicalize_unicode_locale_id(LocaleID& locale_id)
             append_sep_and_string(extension);
     }
 
-    return builder.build();
+    return MUST(builder.to_string());
 }
 
-String const& default_locale()
+StringView default_locale()
 {
-    static String locale = "en"sv;
-    return locale;
+    return "en"sv;
 }
 
 bool is_locale_available(StringView locale)
@@ -766,14 +770,14 @@ StringView style_to_string(Style style)
     }
 }
 
-Span<StringView const> __attribute__((weak)) get_available_keyword_values(StringView) { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_calendars() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_collation_case_orderings() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_collation_numeric_orderings() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_collation_types() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_currencies() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_hour_cycles() { return {}; }
-Span<StringView const> __attribute__((weak)) get_available_number_systems() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_keyword_values(StringView) { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_calendars() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_collation_case_orderings() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_collation_numeric_orderings() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_collation_types() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_currencies() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_hour_cycles() { return {}; }
+ReadonlySpan<StringView> __attribute__((weak)) get_available_number_systems() { return {}; }
 Optional<Locale> __attribute__((weak)) locale_from_string(StringView) { return {}; }
 Optional<Language> __attribute__((weak)) language_from_string(StringView) { return {}; }
 Optional<Territory> __attribute__((weak)) territory_from_string(StringView) { return {}; }
@@ -824,17 +828,24 @@ Optional<String> format_locale_for_display(StringView locale, LocaleID locale_id
 
     Optional<String> secondary_tag;
 
-    if (script.has_value() && region.has_value())
-        secondary_tag = patterns->locale_separator.replace("{0}"sv, *script, ReplaceMode::FirstOnly).replace("{1}"sv, *region, ReplaceMode::FirstOnly);
-    else if (script.has_value())
-        secondary_tag = *script;
-    else if (region.has_value())
-        secondary_tag = *region;
+    if (script.has_value() && region.has_value()) {
+        secondary_tag = MUST(String::from_utf8(patterns->locale_separator));
+        secondary_tag = MUST(secondary_tag->replace("{0}"sv, *script, ReplaceMode::FirstOnly));
+        secondary_tag = MUST(secondary_tag->replace("{1}"sv, *region, ReplaceMode::FirstOnly));
+    } else if (script.has_value()) {
+        secondary_tag = MUST(String::from_utf8(*script));
+    } else if (region.has_value()) {
+        secondary_tag = MUST(String::from_utf8(*region));
+    }
 
     if (!secondary_tag.has_value())
-        return primary_tag;
+        return MUST(String::from_utf8(primary_tag));
 
-    return patterns->locale_pattern.replace("{0}"sv, primary_tag, ReplaceMode::FirstOnly).replace("{1}"sv, *secondary_tag, ReplaceMode::FirstOnly);
+    auto result = MUST(String::from_utf8(patterns->locale_pattern));
+    result = MUST(result.replace("{0}"sv, primary_tag, ReplaceMode::FirstOnly));
+    result = MUST(result.replace("{1}"sv, *secondary_tag, ReplaceMode::FirstOnly));
+
+    return result;
 }
 
 Optional<ListPatterns> __attribute__((weak)) get_locale_list_patterns(StringView, StringView, Style) { return {}; }
@@ -903,7 +914,7 @@ String resolve_most_likely_territory_alias(LanguageID const& language_id, String
             return territory.release_value();
     }
 
-    return aliases[0].to_string();
+    return MUST(String::from_utf8(aliases[0]));
 }
 
 String LanguageID::to_string() const
@@ -924,19 +935,19 @@ String LanguageID::to_string() const
     for (auto const& variant : variants)
         append_segment(variant);
 
-    return builder.build();
+    return MUST(builder.to_string());
 }
 
 String LocaleID::to_string() const
 {
     StringBuilder builder;
 
-    auto append_segment = [&](Optional<String> const& segment) {
-        if (!segment.has_value() || segment->is_empty())
+    auto append_segment = [&](auto const& segment) {
+        if (segment.is_empty())
             return;
         if (!builder.is_empty())
             builder.append('-');
-        builder.append(*segment);
+        builder.append(segment);
     };
 
     append_segment(language_id.to_string());
@@ -973,7 +984,7 @@ String LocaleID::to_string() const
             append_segment(extension);
     }
 
-    return builder.build();
+    return MUST(builder.to_string());
 }
 
 }

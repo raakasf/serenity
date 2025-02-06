@@ -7,125 +7,227 @@
 #pragma once
 
 #include <AK/Vector.h>
-#include <LibWeb/CSS/Length.h>
-#include <LibWeb/CSS/Percentage.h>
+#include <LibWeb/CSS/PercentageOr.h>
+#include <LibWeb/Layout/AvailableSpace.h>
 
 namespace Web::CSS {
 
-class GridTrackSize {
+class GridSize {
 public:
     enum class Type {
-        Length,
-        Percentage,
+        LengthPercentage,
         FlexibleLength,
-        // TODO: Max-Content
+        FitContent,
+        MaxContent,
+        MinContent,
     };
 
-    GridTrackSize(Length);
-    GridTrackSize(Percentage);
-    GridTrackSize(float);
-    ~GridTrackSize();
+    GridSize(Type, LengthPercentage);
+    GridSize(LengthPercentage);
+    GridSize(Flex);
+    GridSize(Type);
+    GridSize();
+    ~GridSize();
 
-    static GridTrackSize make_auto();
+    static GridSize make_auto();
 
     Type type() const { return m_type; }
 
-    bool is_length() const { return m_type == Type::Length; }
-    bool is_percentage() const { return m_type == Type::Percentage; }
+    bool is_auto(Layout::AvailableSize const&) const;
+    bool is_fixed(Layout::AvailableSize const&) const;
     bool is_flexible_length() const { return m_type == Type::FlexibleLength; }
+    bool is_fit_content() const { return m_type == Type::FitContent; }
+    bool is_max_content() const { return m_type == Type::MaxContent; }
+    bool is_min_content() const { return m_type == Type::MinContent; }
 
-    Length length() const;
-    Percentage percentage() const { return m_percentage; }
-    float flexible_length() const { return m_flexible_length; }
+    LengthPercentage length_percentage() const { return m_value.get<LengthPercentage>(); }
+    double flex_factor() const { return m_value.get<Flex>().to_fr(); }
 
-    // https://drafts.csswg.org/css-grid/#layout-algorithm
-    // Intrinsic sizing function - min-content, max-content, auto, fit-content()
-    // FIXME: Add missing properties once implemented.
-    bool is_intrinsic_track_sizing() const
-    {
-        return (m_type == Type::Length && m_length.is_auto());
-    }
+    // https://www.w3.org/TR/css-grid-2/#layout-algorithm
+    // An intrinsic sizing function (min-content, max-content, auto, fit-content()).
+    bool is_intrinsic(Layout::AvailableSize const&) const;
 
     bool is_definite() const
     {
-        return (m_type == Type::Length && !m_length.is_auto()) || is_percentage();
+        return type() == Type::LengthPercentage && !length_percentage().is_auto();
     }
 
+    Size css_size() const;
+
     String to_string() const;
-    bool operator==(GridTrackSize const& other) const
+    bool operator==(GridSize const& other) const
     {
         return m_type == other.type()
-            && m_length == other.length()
-            && m_percentage == other.percentage()
-            && m_flexible_length == other.flexible_length();
+            && m_value == other.m_value;
     }
 
 private:
     Type m_type;
-    // Length includes a RefPtr<CalculatedStyleValue> member, but we can't include the header StyleValue.h as it includes
-    // this file already. To break the cyclic dependency, we must initialize m_length in the constructor.
-    Length m_length;
-    Percentage m_percentage { Percentage(0) };
-    float m_flexible_length { 0 };
+    Variant<Empty, LengthPercentage, Flex> m_value;
 };
 
-class MetaGridTrackSize {
+class GridFitContent {
 public:
-    MetaGridTrackSize(CSS::GridTrackSize);
-    MetaGridTrackSize(CSS::GridTrackSize min_grid_track_size, CSS::GridTrackSize max_grid_track_size);
+    GridFitContent(GridSize);
+    GridFitContent();
 
-    bool is_min_max() const { return m_is_min_max; }
-
-    GridTrackSize grid_track_size() const& { return m_min_grid_track_size; }
-    GridTrackSize min_grid_track_size() const& { return m_min_grid_track_size; }
-    GridTrackSize max_grid_track_size() const& { return m_max_grid_track_size; }
+    GridSize max_grid_size() const& { return m_max_grid_size; }
 
     String to_string() const;
-    bool operator==(MetaGridTrackSize const& other) const
+    bool operator==(GridFitContent const& other) const
     {
-        return m_min_grid_track_size == other.min_grid_track_size()
-            && m_max_grid_track_size == other.max_grid_track_size();
+        return m_max_grid_size == other.m_max_grid_size;
     }
 
 private:
-    GridTrackSize m_min_grid_track_size;
-    GridTrackSize m_max_grid_track_size;
-    bool m_is_min_max { false };
+    GridSize m_max_grid_size;
 };
 
-class ExplicitTrackSizing {
+class GridMinMax {
+public:
+    GridMinMax(CSS::GridSize min_grid_size, CSS::GridSize max_grid_size);
+    GridMinMax() = default;
+
+    GridSize min_grid_size() const& { return m_min_grid_size; }
+    GridSize max_grid_size() const& { return m_max_grid_size; }
+
+    String to_string() const;
+    bool operator==(GridMinMax const& other) const
+    {
+        return m_min_grid_size == other.min_grid_size()
+            && m_max_grid_size == other.max_grid_size();
+    }
+
+private:
+    GridSize m_min_grid_size;
+    GridSize m_max_grid_size;
+};
+
+struct GridLineNames {
+    Vector<String> names;
+
+    String to_string() const;
+    bool operator==(GridLineNames const& other) const { return names == other.names; }
+};
+
+class GridTrackSizeList {
+public:
+    GridTrackSizeList(Vector<Variant<ExplicitGridTrack, GridLineNames>>&& list);
+    GridTrackSizeList();
+
+    static GridTrackSizeList make_none();
+
+    Vector<CSS::ExplicitGridTrack> track_list() const;
+    Vector<Variant<ExplicitGridTrack, GridLineNames>> list() const { return m_list; }
+
+    String to_string() const;
+    bool operator==(GridTrackSizeList const& other) const;
+
+private:
+    Vector<Variant<ExplicitGridTrack, GridLineNames>> m_list;
+};
+
+class GridRepeat {
 public:
     enum class Type {
         AutoFit,
         AutoFill,
+        Default,
     };
+    GridRepeat(GridTrackSizeList, int repeat_count);
+    GridRepeat(GridTrackSizeList, Type);
+    GridRepeat();
 
-    ExplicitTrackSizing();
-    ExplicitTrackSizing(Vector<CSS::MetaGridTrackSize>);
-    ExplicitTrackSizing(Vector<CSS::MetaGridTrackSize>, int repeat_count);
-    ExplicitTrackSizing(Vector<CSS::MetaGridTrackSize>, Type);
-
-    static ExplicitTrackSizing make_auto() { return ExplicitTrackSizing(); };
-
-    bool is_repeat() const { return m_is_repeat; }
-    bool is_auto_fill() const { return m_is_auto_fill; }
-    bool is_auto_fit() const { return m_is_auto_fit; }
-    int repeat_count() const { return m_repeat_count; }
-
-    Vector<CSS::MetaGridTrackSize> meta_grid_track_sizes() const& { return m_meta_grid_track_sizes; }
+    bool is_auto_fill() const { return m_type == Type::AutoFill; }
+    bool is_auto_fit() const { return m_type == Type::AutoFit; }
+    bool is_default() const { return m_type == Type::Default; }
+    int repeat_count() const
+    {
+        VERIFY(is_default());
+        return m_repeat_count;
+    }
+    GridTrackSizeList grid_track_size_list() const& { return m_grid_track_size_list; }
+    Type type() const& { return m_type; }
 
     String to_string() const;
-    bool operator==(ExplicitTrackSizing const& other) const
+    bool operator==(GridRepeat const& other) const
     {
-        return m_meta_grid_track_sizes == other.meta_grid_track_sizes();
+        if (m_type != other.type())
+            return false;
+        if (m_type == Type::Default && m_repeat_count != other.repeat_count())
+            return false;
+        return m_grid_track_size_list == other.grid_track_size_list();
     }
 
 private:
-    Vector<CSS::MetaGridTrackSize> m_meta_grid_track_sizes;
-    bool m_is_repeat { false };
-    bool m_is_auto_fill { false };
-    bool m_is_auto_fit { false };
+    Type m_type;
+    GridTrackSizeList m_grid_track_size_list;
     int m_repeat_count { 0 };
+};
+
+class ExplicitGridTrack {
+public:
+    enum class Type {
+        FitContent,
+        MinMax,
+        Repeat,
+        Default,
+    };
+    ExplicitGridTrack(CSS::GridFitContent);
+    ExplicitGridTrack(CSS::GridRepeat);
+    ExplicitGridTrack(CSS::GridMinMax);
+    ExplicitGridTrack(CSS::GridSize);
+
+    bool is_fit_content() const { return m_type == Type::FitContent; }
+    GridFitContent fit_content() const
+    {
+        VERIFY(is_fit_content());
+        return m_grid_fit_content;
+    }
+
+    bool is_repeat() const { return m_type == Type::Repeat; }
+    GridRepeat repeat() const
+    {
+        VERIFY(is_repeat());
+        return m_grid_repeat;
+    }
+
+    bool is_minmax() const { return m_type == Type::MinMax; }
+    GridMinMax minmax() const
+    {
+        VERIFY(is_minmax());
+        return m_grid_minmax;
+    }
+
+    bool is_default() const { return m_type == Type::Default; }
+    GridSize grid_size() const
+    {
+        VERIFY(is_default());
+        return m_grid_size;
+    }
+
+    Type type() const { return m_type; }
+
+    String to_string() const;
+    bool operator==(ExplicitGridTrack const& other) const
+    {
+        if (is_fit_content() && other.is_fit_content())
+            return m_grid_fit_content == other.fit_content();
+        if (is_repeat() && other.is_repeat())
+            return m_grid_repeat == other.repeat();
+        if (is_minmax() && other.is_minmax())
+            return m_grid_minmax == other.minmax();
+        if (is_default() && other.is_default())
+            return m_grid_size == other.grid_size();
+        return false;
+    }
+
+private:
+    Type m_type;
+    GridFitContent m_grid_fit_content;
+    GridRepeat m_grid_repeat;
+    GridMinMax m_grid_minmax;
+    GridSize m_grid_size;
 };
 
 }

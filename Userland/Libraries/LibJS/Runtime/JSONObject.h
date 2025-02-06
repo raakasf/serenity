@@ -12,6 +12,7 @@ namespace JS {
 
 class JSONObject final : public Object {
     JS_OBJECT(JSONObject, Object);
+    JS_DECLARE_ALLOCATOR(JSONObject);
 
 public:
     virtual void initialize(Realm&) override;
@@ -19,7 +20,7 @@ public:
 
     // The base implementation of stringify is exposed because it is used by
     // test-js to communicate between the JS tests and the C++ test runner.
-    static ThrowCompletionOr<String> stringify_impl(VM&, Value value, Value replacer, Value space);
+    static ThrowCompletionOr<Optional<ByteString>> stringify_impl(VM&, Value value, Value replacer, Value space);
 
     static Value parse_json_value(VM&, JsonValue const&);
 
@@ -27,18 +28,18 @@ private:
     explicit JSONObject(Realm&);
 
     struct StringifyState {
-        FunctionObject* replacer_function { nullptr };
-        HashTable<Object*> seen_objects;
-        String indent { String::empty() };
-        String gap;
-        Optional<Vector<String>> property_list;
+        GCPtr<FunctionObject> replacer_function;
+        HashTable<GCPtr<Object>> seen_objects;
+        ByteString indent { ByteString::empty() };
+        ByteString gap;
+        Optional<Vector<ByteString>> property_list;
     };
 
     // Stringify helpers
-    static ThrowCompletionOr<String> serialize_json_property(VM&, StringifyState&, PropertyKey const& key, Object* holder);
-    static ThrowCompletionOr<String> serialize_json_object(VM&, StringifyState&, Object&);
-    static ThrowCompletionOr<String> serialize_json_array(VM&, StringifyState&, Object&);
-    static String quote_json_string(String);
+    static ThrowCompletionOr<Optional<ByteString>> serialize_json_property(VM&, StringifyState&, PropertyKey const& key, Object* holder);
+    static ThrowCompletionOr<ByteString> serialize_json_object(VM&, StringifyState&, Object&);
+    static ThrowCompletionOr<ByteString> serialize_json_array(VM&, StringifyState&, Object&);
+    static ByteString quote_json_string(ByteString);
 
     // Parse helpers
     static Object* parse_json_object(VM&, JsonObject const&);

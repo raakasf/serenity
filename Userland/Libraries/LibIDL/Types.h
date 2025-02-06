@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2022, Ali Mohammad Pur <mpfard@serenityos.org>
@@ -10,11 +10,10 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullRefPtr.h>
-#include <AK/NonnullRefPtrVector.h>
 #include <AK/SourceGenerator.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Tuple.h>
 #include <AK/TypeCasts.h>
@@ -38,12 +37,13 @@ enum class SequenceStorageType {
 };
 
 struct CppType {
-    String name;
+    ByteString name;
     SequenceStorageType sequence_storage_type;
 };
 
 class ParameterizedType;
 class UnionType;
+class Interface;
 
 class Type : public RefCounted<Type> {
 public:
@@ -53,14 +53,14 @@ public:
         Union,
     };
 
-    Type(String name, bool nullable)
+    Type(ByteString name, bool nullable)
         : m_kind(Kind::Plain)
         , m_name(move(name))
         , m_nullable(nullable)
     {
     }
 
-    Type(Kind kind, String name, bool nullable)
+    Type(Kind kind, ByteString name, bool nullable)
         : m_kind(kind)
         , m_name(move(name))
         , m_nullable(nullable)
@@ -81,7 +81,7 @@ public:
     UnionType const& as_union() const;
     UnionType& as_union();
 
-    String const& name() const { return m_name; }
+    ByteString const& name() const { return m_name; }
 
     bool is_nullable() const { return m_nullable; }
     void set_nullable(bool value) { m_nullable = value; }
@@ -125,7 +125,7 @@ public:
     bool is_integer() const { return is_plain() && m_name.is_one_of("byte", "octet", "short", "unsigned short", "long", "unsigned long", "long long", "unsigned long long"); }
 
     // https://webidl.spec.whatwg.org/#dfn-numeric-type
-    bool is_numeric() const { return is_plain() && (is_integer() || m_name.is_one_of("float", "unrestricted float", "double", "unrestricted double")); }
+    bool is_numeric() const { return is_plain() && (is_integer() || is_floating_point()); }
 
     // https://webidl.spec.whatwg.org/#dfn-primitive-type
     bool is_primitive() const { return is_plain() && (is_numeric() || is_boolean() || m_name == "bigint"); }
@@ -134,28 +134,35 @@ public:
     bool is_sequence() const { return is_parameterized() && m_name == "sequence"; }
 
     // https://webidl.spec.whatwg.org/#dfn-distinguishable
-    bool is_distinguishable_from(Type const& other) const;
+    bool is_distinguishable_from(Interface const&, Type const& other) const;
+
+    bool is_json(Interface const&) const;
+
+    bool is_restricted_floating_point() const { return m_name.is_one_of("float", "double"); }
+    bool is_unrestricted_floating_point() const { return m_name.is_one_of("unrestricted float", "unrestricted double"); }
+    bool is_floating_point() const { return is_restricted_floating_point() || is_unrestricted_floating_point(); }
 
 private:
     Kind m_kind;
-    String m_name;
+    ByteString m_name;
     bool m_nullable { false };
 };
 
 struct Parameter {
-    NonnullRefPtr<Type> type;
-    String name;
+    NonnullRefPtr<Type const> type;
+    ByteString name;
     bool optional { false };
-    Optional<String> optional_default_value;
-    HashMap<String, String> extended_attributes;
+    Optional<ByteString> optional_default_value;
+    HashMap<ByteString, ByteString> extended_attributes;
     bool variadic { false };
 };
 
 struct Function {
-    NonnullRefPtr<Type> return_type;
-    String name;
+    NonnullRefPtr<Type const> return_type;
+    ByteString name;
     Vector<Parameter> parameters;
-    HashMap<String, String> extended_attributes;
+    HashMap<ByteString, ByteString> extended_attributes;
+    LineTrackingLexer::Position source_position;
     size_t overload_index { 0 };
     bool is_overloaded { false };
 
@@ -163,66 +170,68 @@ struct Function {
 };
 
 struct Constructor {
-    String name;
+    ByteString name;
     Vector<Parameter> parameters;
+    HashMap<ByteString, ByteString> extended_attributes;
+    size_t overload_index { 0 };
+    bool is_overloaded { false };
 
     size_t shortest_length() const { return get_function_shortest_length(*this); }
 };
 
 struct Constant {
-    NonnullRefPtr<Type> type;
-    String name;
-    String value;
+    NonnullRefPtr<Type const> type;
+    ByteString name;
+    ByteString value;
 };
 
 struct Attribute {
     bool inherit { false };
     bool readonly { false };
-    NonnullRefPtr<Type> type;
-    String name;
-    HashMap<String, String> extended_attributes;
+    NonnullRefPtr<Type const> type;
+    ByteString name;
+    HashMap<ByteString, ByteString> extended_attributes;
 
     // Added for convenience after parsing
-    String getter_callback_name;
-    String setter_callback_name;
+    ByteString getter_callback_name;
+    ByteString setter_callback_name;
 };
 
 struct DictionaryMember {
     bool required { false };
-    NonnullRefPtr<Type> type;
-    String name;
-    HashMap<String, String> extended_attributes;
-    Optional<String> default_value;
+    NonnullRefPtr<Type const> type;
+    ByteString name;
+    HashMap<ByteString, ByteString> extended_attributes;
+    Optional<ByteString> default_value;
 };
 
 struct Dictionary {
-    String parent_name;
+    ByteString parent_name;
     Vector<DictionaryMember> members;
 };
 
 struct Typedef {
-    HashMap<String, String> extended_attributes;
-    NonnullRefPtr<Type> type;
+    HashMap<ByteString, ByteString> extended_attributes;
+    NonnullRefPtr<Type const> type;
 };
 
 struct Enumeration {
-    HashTable<String> values;
-    HashMap<String, String> translated_cpp_names;
-    String first_member;
+    OrderedHashTable<ByteString> values;
+    OrderedHashMap<ByteString, ByteString> translated_cpp_names;
+    HashMap<ByteString, ByteString> extended_attributes;
+    ByteString first_member;
     bool is_original_definition { true };
 };
 
 struct CallbackFunction {
-    NonnullRefPtr<Type> return_type;
+    NonnullRefPtr<Type const> return_type;
     Vector<Parameter> parameters;
     bool is_legacy_treat_non_object_as_null { false };
 };
 
-class Interface;
-
 class ParameterizedType : public Type {
 public:
-    ParameterizedType(String name, bool nullable, NonnullRefPtrVector<Type> parameters)
+    ParameterizedType(ByteString name, bool nullable, Vector<NonnullRefPtr<Type const>> parameters)
         : Type(Kind::Parameterized, move(name), nullable)
         , m_parameters(move(parameters))
     {
@@ -230,13 +239,13 @@ public:
 
     virtual ~ParameterizedType() override = default;
 
-    void generate_sequence_from_iterable(SourceGenerator& generator, String const& cpp_name, String const& iterable_cpp_name, String const& iterator_method_cpp_name, IDL::Interface const&, size_t recursion_depth) const;
+    void generate_sequence_from_iterable(SourceGenerator& generator, ByteString const& cpp_name, ByteString const& iterable_cpp_name, ByteString const& iterator_method_cpp_name, IDL::Interface const&, size_t recursion_depth) const;
 
-    NonnullRefPtrVector<Type> const& parameters() const { return m_parameters; }
-    NonnullRefPtrVector<Type>& parameters() { return m_parameters; }
+    Vector<NonnullRefPtr<Type const>> const& parameters() const { return m_parameters; }
+    Vector<NonnullRefPtr<Type const>>& parameters() { return m_parameters; }
 
 private:
-    NonnullRefPtrVector<Type> m_parameters;
+    Vector<NonnullRefPtr<Type const>> m_parameters;
 };
 
 static inline size_t get_shortest_function_length(Vector<Function&> const& overload_set)
@@ -254,24 +263,30 @@ class Interface {
 public:
     explicit Interface() = default;
 
-    String name;
-    String parent_name;
+    ByteString name;
+    ByteString parent_name;
+    ByteString namespaced_name;
+    ByteString implemented_name;
 
+    bool is_namespace { false };
     bool is_mixin { false };
 
-    HashMap<String, String> extended_attributes;
+    HashMap<ByteString, ByteString> extended_attributes;
 
     Vector<Attribute> attributes;
+    Vector<Attribute> static_attributes;
     Vector<Constant> constants;
     Vector<Constructor> constructors;
     Vector<Function> functions;
     Vector<Function> static_functions;
     bool has_stringifier { false };
-    Optional<String> stringifier_attribute;
+    Optional<ByteString> stringifier_attribute;
     bool has_unscopable_member { false };
 
-    Optional<NonnullRefPtr<Type>> value_iterator_type;
-    Optional<Tuple<NonnullRefPtr<Type>, NonnullRefPtr<Type>>> pair_iterator_types;
+    Optional<NonnullRefPtr<Type const>> value_iterator_type;
+    Optional<Tuple<NonnullRefPtr<Type const>, NonnullRefPtr<Type const>>> pair_iterator_types;
+    Optional<NonnullRefPtr<Type const>> set_entry_type;
+    bool is_set_readonly { false };
 
     Optional<Function> named_property_getter;
     Optional<Function> named_property_setter;
@@ -281,25 +296,27 @@ public:
 
     Optional<Function> named_property_deleter;
 
-    HashMap<String, Dictionary> dictionaries;
-    HashMap<String, Enumeration> enumerations;
-    HashMap<String, Typedef> typedefs;
-    HashMap<String, Interface*> mixins;
-    HashMap<String, CallbackFunction> callback_functions;
+    HashMap<ByteString, Dictionary> dictionaries;
+    HashMap<ByteString, Enumeration> enumerations;
+    HashMap<ByteString, Typedef> typedefs;
+    HashMap<ByteString, Interface*> mixins;
+    HashMap<ByteString, CallbackFunction> callback_functions;
 
     // Added for convenience after parsing
-    String fully_qualified_name;
-    String constructor_class;
-    String prototype_class;
-    String prototype_base_class;
-    HashMap<String, HashTable<String>> included_mixins;
+    ByteString fully_qualified_name;
+    ByteString constructor_class;
+    ByteString prototype_class;
+    ByteString prototype_base_class;
+    ByteString namespace_class;
+    ByteString global_mixin_class;
+    HashMap<ByteString, HashTable<ByteString>> included_mixins;
 
-    String module_own_path;
-    HashTable<String> required_imported_paths;
+    ByteString module_own_path;
     Vector<Interface&> imported_modules;
 
-    HashMap<String, Vector<Function&>> overload_sets;
-    HashMap<String, Vector<Function&>> static_overload_sets;
+    HashMap<ByteString, Vector<Function&>> overload_sets;
+    HashMap<ByteString, Vector<Function&>> static_overload_sets;
+    HashMap<ByteString, Vector<Constructor&>> constructor_overload_sets;
 
     // https://webidl.spec.whatwg.org/#dfn-support-indexed-properties
     bool supports_indexed_properties() const { return indexed_property_getter.has_value(); }
@@ -318,7 +335,7 @@ public:
 
 class UnionType : public Type {
 public:
-    UnionType(String name, bool nullable, NonnullRefPtrVector<Type> member_types)
+    UnionType(ByteString name, bool nullable, Vector<NonnullRefPtr<Type const>> member_types)
         : Type(Kind::Union, move(name), nullable)
         , m_member_types(move(member_types))
     {
@@ -326,16 +343,16 @@ public:
 
     virtual ~UnionType() override = default;
 
-    NonnullRefPtrVector<Type> const& member_types() const { return m_member_types; }
-    NonnullRefPtrVector<Type>& member_types() { return m_member_types; }
+    Vector<NonnullRefPtr<Type const>> const& member_types() const { return m_member_types; }
+    Vector<NonnullRefPtr<Type const>>& member_types() { return m_member_types; }
 
     // https://webidl.spec.whatwg.org/#dfn-flattened-union-member-types
-    NonnullRefPtrVector<Type> flattened_member_types() const
+    Vector<NonnullRefPtr<Type const>> flattened_member_types() const
     {
         // 1. Let T be the union type.
 
         // 2. Initialize S to ∅.
-        NonnullRefPtrVector<Type> types;
+        Vector<NonnullRefPtr<Type const>> types;
 
         // 3. For each member type U of T:
         for (auto& type : m_member_types) {
@@ -344,8 +361,8 @@ public:
             // 2. If U is a nullable type, then set U to be the inner type of U. (NOTE: Not necessary as nullable is stored with Type and not as a separate struct)
 
             // 3. If U is a union type, then add to S the flattened member types of U.
-            if (type.is_union()) {
-                auto& union_member_type = type.as_union();
+            if (type->is_union()) {
+                auto& union_member_type = type->as_union();
                 types.extend(union_member_type.flattened_member_types());
             } else {
                 // 4. Otherwise, U is not a union type. Add U to S.
@@ -368,7 +385,7 @@ public:
         // 3. For each member type U of T:
         for (auto& type : m_member_types) {
             // 1. If U is a nullable type, then:
-            if (type.is_nullable()) {
+            if (type->is_nullable()) {
                 // 1. Set n to n + 1.
                 ++num_nullable_member_types;
 
@@ -376,8 +393,8 @@ public:
             }
 
             // 2. If U is a union type, then:
-            if (type.is_union()) {
-                auto& union_member_type = type.as_union();
+            if (type->is_union()) {
+                auto& union_member_type = type->as_union();
 
                 // 1. Let m be the number of nullable member types of U.
                 // 2. Set n to n + m.
@@ -390,7 +407,7 @@ public:
     }
 
 private:
-    NonnullRefPtrVector<Type> m_member_types;
+    Vector<NonnullRefPtr<Type const>> m_member_types;
 };
 
 // https://webidl.spec.whatwg.org/#dfn-optionality-value
@@ -405,13 +422,13 @@ class EffectiveOverloadSet {
 public:
     struct Item {
         int callable_id;
-        NonnullRefPtrVector<Type> types;
+        Vector<NonnullRefPtr<Type const>> types;
         Vector<Optionality> optionality_values;
     };
 
-    EffectiveOverloadSet(Vector<Item> items)
+    EffectiveOverloadSet(Vector<Item> items, size_t distinguishing_argument_index)
         : m_items(move(items))
-        , m_argument_count(m_items.is_empty() ? 0 : m_items.first().types.size())
+        , m_distinguishing_argument_index(distinguishing_argument_index)
     {
     }
 
@@ -427,18 +444,19 @@ public:
     bool is_empty() const { return m_items.is_empty(); }
     size_t size() const { return m_items.size(); }
 
-    int distinguishing_argument_index();
+    size_t distinguishing_argument_index() const { return m_distinguishing_argument_index; }
 
     template<typename Matches>
     bool has_overload_with_matching_argument_at_index(size_t index, Matches matches)
     {
-        for (auto const& item : m_items) {
+        for (size_t i = 0; i < m_items.size(); ++i) {
+            auto const& item = m_items[i];
             if (matches(item.types[index], item.optionality_values[index])) {
-                m_last_matching_item = &item;
+                m_last_matching_item_index = i;
                 return true;
             }
         }
-        m_last_matching_item = nullptr;
+        m_last_matching_item_index = {};
         return false;
     }
 
@@ -447,9 +465,9 @@ public:
 private:
     // FIXME: This should be an "ordered set".
     Vector<Item> m_items;
-    size_t m_argument_count;
+    size_t m_distinguishing_argument_index { 0 };
 
-    Item const* m_last_matching_item { nullptr };
+    Optional<size_t> m_last_matching_item_index;
 };
 
 }

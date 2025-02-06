@@ -7,13 +7,15 @@
 #pragma once
 
 #include <AK/Checked.h>
+#include <AK/String.h>
 #include <AK/Variant.h>
 #include <LibCrypto/BigInt/SignedBigInteger.h>
+#include <LibJS/Runtime/BigInt.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS::Intl {
 
-// https://tc39.es/proposal-intl-numberformat-v3/out/numberformat/proposed.html#intl-mathematical-value
+// https://tc39.es/ecma402/#intl-mathematical-value
 class MathematicalValue {
 public:
     enum class Symbol {
@@ -42,8 +44,8 @@ public:
 
     MathematicalValue(Value value)
         : m_value(value.is_number()
-                ? value_from_number(value.as_double())
-                : ValueType(value.as_bigint().big_integer()))
+                  ? value_from_number(value.as_double())
+                  : ValueType(value.as_bigint().big_integer()))
     {
     }
 
@@ -95,11 +97,7 @@ private:
 
     static ValueType value_from_number(double number);
 
-    // NOTE: The specific alignment is to avoid an UBSAN error with Clang i686, due to Clang
-    //       disagreeing with UBSAN on the alignment of doubles. See:
-    //       https://github.com/llvm/llvm-project/issues/54845
-    //       https://github.com/SerenityOS/serenity/issues/13614
-    alignas(8) ValueType m_value { 0.0 };
+    ValueType m_value { 0.0 };
 };
 
 }

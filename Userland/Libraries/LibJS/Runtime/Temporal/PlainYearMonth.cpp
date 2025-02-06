@@ -1,9 +1,10 @@
 /*
- * Copyright (c) 2021-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/TypeCasts.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/GlobalObject.h>
@@ -16,9 +17,11 @@
 
 namespace JS::Temporal {
 
+JS_DEFINE_ALLOCATOR(PlainYearMonth);
+
 // 9 Temporal.PlainYearMonth Objects, https://tc39.es/proposal-temporal/#sec-temporal-plainyearmonth-objects
 PlainYearMonth::PlainYearMonth(i32 iso_year, u8 iso_month, u8 iso_day, Object& calendar, Object& prototype)
-    : Object(prototype)
+    : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_iso_year(iso_year)
     , m_iso_month(iso_month)
     , m_iso_day(iso_day)
@@ -29,7 +32,7 @@ PlainYearMonth::PlainYearMonth(i32 iso_year, u8 iso_month, u8 iso_day, Object& c
 void PlainYearMonth::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(&m_calendar);
+    visitor.visit(m_calendar);
 }
 
 // 9.5.1 ToTemporalYearMonth ( item [ , options ] ), https://tc39.es/proposal-temporal/#sec-temporal-totemporalyearmonth
@@ -71,7 +74,7 @@ ThrowCompletionOr<PlainYearMonth*> to_temporal_year_month(VM& vm, Value item, Ob
     auto result = TRY(parse_temporal_year_month_string(vm, string));
 
     // 7. Let calendar be ? ToTemporalCalendarWithISODefault(result.[[Calendar]]).
-    auto* calendar = TRY(to_temporal_calendar_with_iso_default(vm, result.calendar.has_value() ? js_string(vm, *result.calendar) : js_undefined()));
+    auto* calendar = TRY(to_temporal_calendar_with_iso_default(vm, result.calendar.has_value() ? PrimitiveString::create(vm, *result.calendar) : js_undefined()));
 
     // 8. Set result to ? CreateTemporalYearMonth(result.[[Year]], result.[[Month]], calendar, result.[[Day]]).
     auto* creation_result = TRY(create_temporal_year_month(vm, result.year, result.month, *calendar, result.day));
@@ -193,10 +196,10 @@ ThrowCompletionOr<PlainYearMonth*> create_temporal_year_month(VM& vm, i32 iso_ye
     // 8. Set object.[[ISOMonth]] to isoMonth.
     // 9. Set object.[[Calendar]] to calendar.
     // 10. Set object.[[ISODay]] to referenceISODay.
-    auto* object = TRY(ordinary_create_from_constructor<PlainYearMonth>(vm, *new_target, &Intrinsics::temporal_plain_year_month_prototype, iso_year, iso_month, reference_iso_day, calendar));
+    auto object = TRY(ordinary_create_from_constructor<PlainYearMonth>(vm, *new_target, &Intrinsics::temporal_plain_year_month_prototype, iso_year, iso_month, reference_iso_day, calendar));
 
     // 11. Return object.
-    return object;
+    return object.ptr();
 }
 
 // 9.5.6 TemporalYearMonthToString ( yearMonth, showCalendar ), https://tc39.es/proposal-temporal/#sec-temporal-temporalyearmonthtostring
@@ -208,28 +211,28 @@ ThrowCompletionOr<String> temporal_year_month_to_string(VM& vm, PlainYearMonth& 
     // 3. Let year be ! PadISOYear(yearMonth.[[ISOYear]]).
     // 4. Let month be ToZeroPaddedDecimalString(yearMonth.[[ISOMonth]], 2).
     // 5. Let result be the string-concatenation of year, the code unit 0x002D (HYPHEN-MINUS), and month.
-    auto result = String::formatted("{}-{:02}", pad_iso_year(year_month.iso_year()), year_month.iso_month());
+    auto result = TRY_OR_THROW_OOM(vm, String::formatted("{}-{:02}", MUST_OR_THROW_OOM(pad_iso_year(vm, year_month.iso_year())), year_month.iso_month()));
 
     // 6. Let calendarID be ? ToString(yearMonth.[[Calendar]]).
     auto calendar_id = TRY(Value(&year_month.calendar()).to_string(vm));
 
-    // 7. If showCalendar is "always" or if calendarID is not "iso8601", then
-    if (show_calendar == "always"sv || calendar_id != "iso8601") {
+    // 7. If showCalendar is one of "always" or "critical", or if calendarID is not "iso8601", then
+    if (show_calendar.is_one_of("always"sv, "critical"sv) || calendar_id != "iso8601") {
         // a. Let day be ToZeroPaddedDecimalString(yearMonth.[[ISODay]], 2).
         // b. Set result to the string-concatenation of result, the code unit 0x002D (HYPHEN-MINUS), and day.
-        result = String::formatted("{}-{:02}", result, year_month.iso_day());
+        result = TRY_OR_THROW_OOM(vm, String::formatted("{}-{:02}", result, year_month.iso_day()));
     }
 
     // 8. Let calendarString be ! FormatCalendarAnnotation(calendarID, showCalendar).
-    auto calendar_string = format_calendar_annotation(calendar_id, show_calendar);
+    auto calendar_string = MUST_OR_THROW_OOM(format_calendar_annotation(vm, calendar_id, show_calendar));
 
     // 9. Set result to the string-concatenation of result and calendarString.
     // 10. Return result.
-    return String::formatted("{}{}", result, calendar_string);
+    return TRY_OR_THROW_OOM(vm, String::formatted("{}{}", result, calendar_string));
 }
 
 // 9.5.7 DifferenceTemporalPlainYearMonth ( operation, yearMonth, other, options ), https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplainyearmonth
-ThrowCompletionOr<Duration*> difference_temporal_plain_year_month(VM& vm, DifferenceOperation operation, PlainYearMonth& year_month, Value other_value, Value options_value)
+ThrowCompletionOr<NonnullGCPtr<Duration>> difference_temporal_plain_year_month(VM& vm, DifferenceOperation operation, PlainYearMonth& year_month, Value other_value, Value options_value)
 {
     // 1. If operation is since, let sign be -1. Otherwise, let sign be 1.
     i8 sign = operation == DifferenceOperation::Since ? -1 : 1;
@@ -244,55 +247,78 @@ ThrowCompletionOr<Duration*> difference_temporal_plain_year_month(VM& vm, Differ
     if (!TRY(calendar_equals(vm, calendar, other->calendar())))
         return vm.throw_completion<RangeError>(ErrorType::TemporalDifferentCalendars);
 
-    // 5. Let settings be ? GetDifferenceSettings(operation, options, date, « "week", "day" », "month", "year").
-    auto settings = TRY(get_difference_settings(vm, operation, options_value, UnitGroup::Date, { "week"sv, "day"sv }, { "month"sv }, "year"sv));
+    // 5. Let resolvedOptions be ? SnapshotOwnProperties(? GetOptionsObject(options), null).
+    auto resolved_options = TRY(TRY(get_options_object(vm, options_value))->snapshot_own_properties(vm, nullptr));
 
-    // 6. Let fieldNames be ? CalendarFields(calendar, « "monthCode", "year" »).
-    auto field_names = TRY(calendar_fields(vm, calendar, { "monthCode"sv, "year"sv }));
+    // 6. Let settings be ? GetDifferenceSettings(operation, resolvedOptions, date, « "week", "day" », "month", "year").
+    auto settings = TRY(get_difference_settings(vm, operation, resolved_options, UnitGroup::Date, { "week"sv, "day"sv }, { "month"sv }, "year"sv));
 
-    // 7. Let otherFields be ? PrepareTemporalFields(other, fieldNames, «»).
-    auto* other_fields = TRY(prepare_temporal_fields(vm, *other, field_names, Vector<StringView> {}));
-
-    // 8. Perform ! CreateDataPropertyOrThrow(otherFields, "day", 1𝔽).
-    MUST(other_fields->create_data_property_or_throw(vm.names.day, Value(1)));
-
-    // 9. Let otherDate be ? CalendarDateFromFields(calendar, otherFields).
-    auto* other_date = TRY(calendar_date_from_fields(vm, calendar, *other_fields));
-
-    // 10. Let thisFields be ? PrepareTemporalFields(yearMonth, fieldNames, «»).
-    auto* this_fields = TRY(prepare_temporal_fields(vm, year_month, field_names, Vector<StringView> {}));
-
-    // 11. Perform ! CreateDataPropertyOrThrow(thisFields, "day", 1𝔽).
-    MUST(this_fields->create_data_property_or_throw(vm.names.day, Value(1)));
-
-    // 12. Let thisDate be ? CalendarDateFromFields(calendar, thisFields).
-    auto* this_date = TRY(calendar_date_from_fields(vm, calendar, *this_fields));
-
-    // 13. Let untilOptions be ? MergeLargestUnitOption(settings.[[Options]], settings.[[LargestUnit]]).
-    auto* until_options = TRY(merge_largest_unit_option(vm, settings.options, settings.largest_unit));
-
-    // 14. Let result be ? CalendarDateUntil(calendar, thisDate, otherDate, untilOptions).
-    auto* duration = TRY(calendar_date_until(vm, calendar, this_date, other_date, *until_options));
-
-    auto result = DurationRecord { duration->years(), duration->months(), 0, 0, 0, 0, 0, 0, 0, 0 };
-
-    // 15. If settings.[[SmallestUnit]] is not "month" or settings.[[RoundingIncrement]] ≠ 1, then
-    if (settings.smallest_unit != "month"sv || settings.rounding_increment != 1) {
-        // a. Set result to (? RoundDuration(result.[[Years]], result.[[Months]], 0, 0, 0, 0, 0, 0, 0, 0, settings.[[RoundingIncrement]], settings.[[SmallestUnit]], settings.[[RoundingMode]], thisDate)).[[DurationRecord]].
-        result = TRY(round_duration(vm, result.years, result.months, 0, 0, 0, 0, 0, 0, 0, 0, settings.rounding_increment, settings.smallest_unit, settings.rounding_mode, this_date)).duration_record;
+    // 7. If yearMonth.[[ISOYear]] = other.[[ISOYear]] and yearMonth.[[ISOMonth]] = other.[[ISOMonth]] and yearMonth.[[ISODay]] = other.[[ISODay]], then
+    if (year_month.iso_year() == other->iso_year() && year_month.iso_month() == other->iso_month() && year_month.iso_day() == other->iso_day()) {
+        // a. Return ! CreateTemporalDuration(0, 0, 0, 0, 0, 0, 0, 0, 0, 0).
+        return MUST(create_temporal_duration(vm, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     }
 
-    // 16. Return ! CreateTemporalDuration(sign × result.[[Years]], sign × result.[[Months]], 0, 0, 0, 0, 0, 0, 0, 0).
-    return MUST(create_temporal_duration(vm, sign * result.years, sign * result.months, 0, 0, 0, 0, 0, 0, 0, 0));
+    // 8. Perform ! CreateDataPropertyOrThrow(resolvedOptions, "largestUnit", settings.[[LargestUnit]]).
+    MUST(resolved_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, settings.largest_unit)));
+
+    // 9. Let calendarRec be ? CreateCalendarMethodsRecord(calendar, « dateAdd, dateFromFields, dateUntil, fields »).
+    // FIXME: The type of calendar in PlainYearMonth does not align with latest spec
+    auto calendar_record = TRY(create_calendar_methods_record(vm, NonnullGCPtr<Object> { calendar }, { { CalendarMethod::DateAdd, CalendarMethod::DateFromFields, CalendarMethod::DateUntil, CalendarMethod::Fields } }));
+
+    // 10. Let fieldNames be ? CalendarFields(calendarRec, « "monthCode", "year" »).
+    // FIXME: Pass through calendar record
+    auto field_names = TRY(calendar_fields(vm, calendar, { "monthCode"sv, "year"sv }));
+
+    // 11. Let thisFields be ? PrepareTemporalFields(yearMonth, fieldNames, «»).
+    auto* this_fields = TRY(prepare_temporal_fields(vm, year_month, field_names, Vector<StringView> {}));
+
+    // 12. Perform ! CreateDataPropertyOrThrow(thisFields, "day", 1𝔽).
+    MUST(this_fields->create_data_property_or_throw(vm.names.day, Value(1)));
+
+    // 13. Let thisDate be ? CalendarDateFromFields(calendarRec, thisFields).
+    // FIXME: Pass through calendar record
+    auto* this_date = TRY(calendar_date_from_fields(vm, calendar, *this_fields));
+
+    // 14. Let otherFields be ? PrepareTemporalFields(other, fieldNames, «»).
+    auto* other_fields = TRY(prepare_temporal_fields(vm, *other, field_names, Vector<StringView> {}));
+
+    // 15. Perform ! CreateDataPropertyOrThrow(otherFields, "day", 1𝔽).
+    MUST(other_fields->create_data_property_or_throw(vm.names.day, Value(1)));
+
+    // 16. Let otherDate be ? CalendarDateFromFields(calendarRec, otherFields).
+    // FIXME: Pass through calendar record
+    auto* other_date = TRY(calendar_date_from_fields(vm, calendar, *other_fields));
+
+    // 17. Perform ! CreateDataPropertyOrThrow(resolvedOptions, "largestUnit", settings.[[LargestUnit]]).
+    MUST(resolved_options->create_data_property_or_throw(vm.names.largestUnit, PrimitiveString::create(vm, settings.largest_unit)));
+
+    // 18. Let result be ? CalendarDateUntil(calendarRec, thisDate, otherDate, resolvedOptions).
+    auto result = TRY(calendar_date_until(vm, calendar_record, this_date, other_date, *resolved_options));
+
+    // 19. If settings.[[SmallestUnit]] is not "month" or settings.[[RoundingIncrement]] ≠ 1, then
+    if (settings.smallest_unit != "month"sv || settings.rounding_increment != 1) {
+        // a. Let roundRecord be ? RoundDuration(result.[[Years]], result.[[Months]], 0, 0, 0, 0, 0, 0, 0, 0, settings.[[RoundingIncrement]], settings.[[SmallestUnit]], settings.[[RoundingMode]], thisDate, calendarRec).
+        auto round_record = TRY(round_duration(vm, result->years(), result->months(), 0, 0, 0, 0, 0, 0, 0, 0, settings.rounding_increment, settings.smallest_unit, settings.rounding_mode, this_date, calendar_record));
+
+        // b. Let roundResult be roundRecord.[[DurationRecord]].
+        auto round_result = round_record.duration_record;
+
+        // FIXME: c. Set result to ? BalanceDateDurationRelative(roundResult.[[Years]], roundResult.[[Months]], 0, 0, settings.[[LargestUnit]], settings.[[SmallestUnit]], thisDate, calendarRec).
+        result = MUST(create_temporal_duration(vm, round_result.years, round_result.months, 0, 0, 0, 0, 0, 0, 0, 0));
+    }
+
+    // 20. Return ! CreateTemporalDuration(sign × result.[[Years]], sign × result.[[Months]], 0, 0, 0, 0, 0, 0, 0, 0).
+    return MUST(create_temporal_duration(vm, sign * result->years(), sign * result->months(), 0, 0, 0, 0, 0, 0, 0, 0));
 }
 
-// 9.5.8 AddDurationToOrSubtractDurationFromPlainYearMonth ( operation, yearMonth, temporalDurationLike, options ), https://tc39.es/proposal-temporal/#sec-temporal-addtemporalplainyearmonth
+// 9.5.8 AddDurationToOrSubtractDurationFromPlainYearMonth ( operation, yearMonth, temporalDurationLike, options ), https://tc39.es/proposal-temporal/#sec-temporal-adddurationtoorsubtractdurationfromplainyearmonth
 ThrowCompletionOr<PlainYearMonth*> add_duration_to_or_subtract_duration_from_plain_year_month(VM& vm, ArithmeticOperation operation, PlainYearMonth& year_month, Value temporal_duration_like, Value options_value)
 {
     auto& realm = *vm.current_realm();
 
     // 1. Let duration be ? ToTemporalDuration(temporalDurationLike).
-    auto* duration = TRY(to_temporal_duration(vm, temporal_duration_like));
+    auto duration = TRY(to_temporal_duration(vm, temporal_duration_like));
 
     // 2. If operation is subtract, then
     if (operation == ArithmeticOperation::Subtract) {
@@ -322,11 +348,8 @@ ThrowCompletionOr<PlainYearMonth*> add_duration_to_or_subtract_duration_from_pla
 
     // 9. If sign < 0, then
     if (sign < 0) {
-        // a. Let dayFromCalendar be ? CalendarDaysInMonth(calendar, yearMonth).
-        auto day_from_calendar = TRY(calendar_days_in_month(vm, calendar, year_month));
-
-        // b. Let day be ? ToPositiveInteger(dayFromCalendar).
-        day = TRY(to_positive_integer(vm, day_from_calendar));
+        // a. Let day be ? CalendarDaysInMonth(calendar, yearMonth).
+        day = TRY(calendar_days_in_month(vm, calendar, year_month));
     }
     // 10. Else,
     else {
@@ -341,10 +364,10 @@ ThrowCompletionOr<PlainYearMonth*> add_duration_to_or_subtract_duration_from_pla
     auto* date = TRY(calendar_date_from_fields(vm, calendar, *fields));
 
     // 13. Let durationToAdd be ! CreateTemporalDuration(duration.[[Years]], duration.[[Months]], duration.[[Weeks]], balanceResult.[[Days]], 0, 0, 0, 0, 0, 0).
-    auto* duration_to_add = MUST(create_temporal_duration(vm, duration->years(), duration->months(), duration->weeks(), balance_result.days, 0, 0, 0, 0, 0, 0));
+    auto duration_to_add = MUST(create_temporal_duration(vm, duration->years(), duration->months(), duration->weeks(), balance_result.days, 0, 0, 0, 0, 0, 0));
 
     // 14. Let optionsCopy be OrdinaryObjectCreate(null).
-    auto* options_copy = Object::create(realm, nullptr);
+    auto options_copy = Object::create(realm, nullptr);
 
     // 15. Let entries be ? EnumerableOwnPropertyNames(options, key+value).
     auto entries = TRY(options->enumerable_own_property_names(Object::PropertyKind::KeyAndValue));

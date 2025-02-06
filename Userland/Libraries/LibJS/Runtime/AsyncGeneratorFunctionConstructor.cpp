@@ -12,15 +12,17 @@
 
 namespace JS {
 
+JS_DEFINE_ALLOCATOR(AsyncGeneratorFunctionConstructor);
+
 AsyncGeneratorFunctionConstructor::AsyncGeneratorFunctionConstructor(Realm& realm)
-    : NativeFunction(realm.vm().names.AsyncGeneratorFunction.as_string(), *realm.intrinsics().function_prototype())
+    : NativeFunction(realm.vm().names.AsyncGeneratorFunction.as_string(), realm.intrinsics().function_prototype())
 {
 }
 
 void AsyncGeneratorFunctionConstructor::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    NativeFunction::initialize(realm);
+    Base::initialize(realm);
 
     // 27.4.2.1 AsyncGeneratorFunction.length, https://tc39.es/ecma262/#sec-asyncgeneratorfunction-length
     define_direct_property(vm.names.length, Value(1), Attribute::Configurable);
@@ -35,19 +37,20 @@ ThrowCompletionOr<Value> AsyncGeneratorFunctionConstructor::call()
     return TRY(construct(*this));
 }
 
-// 27.4.1.1 AsyncGeneratorFunction ( p1, p2, … , pn, body ), https://tc39.es/ecma262/#sec-asyncgeneratorfunction
-ThrowCompletionOr<Object*> AsyncGeneratorFunctionConstructor::construct(FunctionObject& new_target)
+// 27.4.1.1 AsyncGeneratorFunction ( ...parameterArgs, bodyArg ), https://tc39.es/ecma262/#sec-asyncgeneratorfunction
+ThrowCompletionOr<NonnullGCPtr<Object>> AsyncGeneratorFunctionConstructor::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
 
     // 1. Let C be the active function object.
     auto* constructor = vm.active_function_object();
 
-    // 2. Let args be the argumentsList that was passed to this function by [[Call]] or [[Construct]].
-    auto& args = vm.running_execution_context().arguments;
+    // 2. If bodyArg is not present, set bodyArg to the empty String.
+    // NOTE: This does that, as well as the string extraction done inside of CreateDynamicFunction
+    auto extracted = TRY(extract_parameter_arguments_and_body(vm, vm.running_execution_context().arguments));
 
-    // 3. Return ? CreateDynamicFunction(C, NewTarget, asyncGenerator, args).
-    return TRY(FunctionConstructor::create_dynamic_function(vm, *constructor, &new_target, FunctionKind::AsyncGenerator, args));
+    // 3. Return ? CreateDynamicFunction(C, NewTarget, async-generator, parameterArgs, bodyArg).
+    return TRY(FunctionConstructor::create_dynamic_function(vm, *constructor, &new_target, FunctionKind::AsyncGenerator, extracted.parameters, extracted.body));
 }
 
 }

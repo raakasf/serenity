@@ -53,8 +53,12 @@ public:
         size_t match_length_minimum;
         Error error;
         Token error_token;
-        Vector<FlyString> capture_groups;
+        Vector<DeprecatedFlyString> capture_groups;
         AllOptions options;
+
+        struct {
+            Optional<ByteString> pure_substring_search;
+        } optimization_data {};
     };
 
     explicit Parser(Lexer& lexer)
@@ -82,7 +86,7 @@ protected:
     ALWAYS_INLINE bool match_ordinary_characters();
     ALWAYS_INLINE Token consume();
     ALWAYS_INLINE Token consume(TokenType type, Error error);
-    ALWAYS_INLINE bool consume(String const&);
+    ALWAYS_INLINE bool consume(ByteString const&);
     ALWAYS_INLINE Optional<u32> consume_escaped_code_point(bool unicode);
     ALWAYS_INLINE bool try_skip(StringView);
     ALWAYS_INLINE bool lookahead_any(StringView);
@@ -93,11 +97,6 @@ protected:
     ALWAYS_INLINE bool set_error(Error error);
 
     size_t tell() const { return m_parser_state.current_token.position(); }
-
-    struct NamedCaptureGroup {
-        size_t group_index { 0 };
-        size_t minimum_length { 0 };
-    };
 
     struct ParserState {
         Lexer& lexer;
@@ -110,8 +109,8 @@ protected:
         size_t match_length_minimum { 0 };
         size_t repetition_mark_count { 0 };
         AllOptions regex_options;
-        HashMap<int, size_t> capture_group_minimum_lengths;
-        HashMap<FlyString, NamedCaptureGroup> named_capture_groups;
+        HashMap<size_t, size_t> capture_group_minimum_lengths;
+        HashMap<DeprecatedFlyString, size_t> named_capture_groups;
 
         explicit ParserState(Lexer& lexer)
             : lexer(lexer)
@@ -234,7 +233,7 @@ private:
     };
     StringView read_digits_as_string(ReadDigitsInitialZeroState initial_zero = ReadDigitsInitialZeroState::Allow, bool hex = false, int max_count = -1, int min_count = -1);
     Optional<unsigned> read_digits(ReadDigitsInitialZeroState initial_zero = ReadDigitsInitialZeroState::Allow, bool hex = false, int max_count = -1, int min_count = -1);
-    FlyString read_capture_group_specifier(bool take_starting_angle_bracket = false);
+    DeprecatedFlyString read_capture_group_specifier(bool take_starting_angle_bracket = false);
 
     struct Script {
         Unicode::Script script {};
@@ -274,7 +273,6 @@ private:
     bool parse_extended_atom(ByteCode&, size_t&, ParseFlags);
     bool parse_inner_disjunction(ByteCode& bytecode_stack, size_t& length, ParseFlags);
     bool parse_invalid_braced_quantifier(); // Note: This function either parses and *fails*, or doesn't parse anything and returns false.
-    bool parse_legacy_octal_escape_sequence(ByteCode& bytecode_stack, size_t& length);
     Optional<u8> parse_legacy_octal_escape();
 
     size_t ensure_total_number_of_capturing_parenthesis();
@@ -291,7 +289,7 @@ private:
     {
         for (auto& index : m_capture_groups_in_scope.last())
             stack.insert_bytecode_clear_capture_group(index);
-    };
+    }
 
     // ECMA-262's flavour of regex is a bit weird in that it allows backrefs to reference "future" captures, and such backrefs
     // always match the empty string. So we have to know how many capturing parenthesis there are, but we don't want to always

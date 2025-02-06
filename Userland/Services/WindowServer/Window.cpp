@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, David Ganz <david.g.ganz@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,10 +17,14 @@
 #include <AK/Badge.h>
 #include <AK/CharacterTypes.h>
 #include <AK/Debug.h>
+#include <LibCore/Account.h>
+#include <LibCore/ProcessStatisticsReader.h>
+#include <LibCore/SessionManagement.h>
+#include <LibKeyboard/CharacterMap.h>
 
 namespace WindowServer {
 
-static String default_window_icon_path()
+static ByteString default_window_icon_path()
 {
     return "/res/icons/16x16/window.png";
 }
@@ -28,7 +33,7 @@ static Gfx::Bitmap& default_window_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file(default_window_icon_path()).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file(default_window_icon_path()).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -36,7 +41,7 @@ static Gfx::Bitmap& minimize_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/downward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/downward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -44,7 +49,7 @@ static Gfx::Bitmap& maximize_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/upward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/upward-triangle.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -52,7 +57,7 @@ static Gfx::Bitmap& restore_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window-restore.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-restore.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -60,7 +65,7 @@ static Gfx::Bitmap& close_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window-close.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-close.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -68,7 +73,7 @@ static Gfx::Bitmap& pin_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/window-pin.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-pin.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
@@ -76,12 +81,12 @@ static Gfx::Bitmap& move_icon()
 {
     static RefPtr<Gfx::Bitmap> s_icon;
     if (!s_icon)
-        s_icon = Gfx::Bitmap::try_load_from_file("/res/icons/16x16/move.png"sv).release_value_but_fixme_should_propagate_errors();
+        s_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/move.png"sv).release_value_but_fixme_should_propagate_errors();
     return *s_icon;
 }
 
-Window::Window(Core::Object& parent, WindowType type)
-    : Core::Object(&parent)
+Window::Window(Core::EventReceiver& parent, WindowType type)
+    : Core::EventReceiver(&parent)
     , m_type(type)
     , m_icon(default_window_icon())
     , m_frame(*this)
@@ -90,8 +95,8 @@ Window::Window(Core::Object& parent, WindowType type)
     frame().window_was_constructed({});
 }
 
-Window::Window(ConnectionFromClient& client, WindowType window_type, WindowMode window_mode, int window_id, bool minimizable, bool closeable, bool frameless, bool resizable, bool fullscreen, Window* parent_window)
-    : Core::Object(&client)
+Window::Window(ConnectionFromClient& client, WindowType window_type, WindowMode window_mode, int window_id, int process_id, bool minimizable, bool closeable, bool frameless, bool resizable, bool fullscreen, Window* parent_window)
+    : Core::EventReceiver(&client)
     , m_client(&client)
     , m_type(window_type)
     , m_mode(window_mode)
@@ -104,9 +109,14 @@ Window::Window(ConnectionFromClient& client, WindowType window_type, WindowMode 
     , m_client_id(client.client_id())
     , m_icon(default_window_icon())
     , m_frame(*this)
+    , m_process_id(process_id)
 {
     if (parent_window)
         set_parent_window(*parent_window);
+    if (!is_frameless() && type() == WindowType::Normal) {
+        if (auto title_username_maybe = compute_title_username(&client); !title_username_maybe.is_error())
+            m_title_username = title_username_maybe.release_value();
+    }
     WindowManager::the().add_window(*this);
     frame().window_was_constructed({});
 }
@@ -126,7 +136,7 @@ void Window::destroy()
     set_visible(false);
 }
 
-void Window::set_title(String const& title)
+void Window::set_title(ByteString const& title)
 {
     if (m_title == title)
         return;
@@ -141,11 +151,15 @@ void Window::set_rect(Gfx::IntRect const& rect)
         return;
     auto old_rect = m_rect;
     m_rect = rect;
+    if (!m_should_show_window_content) {
+        m_rect.set_height(0);
+    }
     if (rect.is_empty()) {
         m_backing_store = nullptr;
     } else if (is_internal() && (!m_backing_store || old_rect.size() != rect.size())) {
         auto format = has_alpha_channel() ? Gfx::BitmapFormat::BGRA8888 : Gfx::BitmapFormat::BGRx8888;
-        m_backing_store = Gfx::Bitmap::try_create(format, m_rect.size()).release_value_but_fixme_should_propagate_errors();
+        m_backing_store = Gfx::Bitmap::create(format, m_rect.size()).release_value_but_fixme_should_propagate_errors();
+        m_backing_store_visible_size = m_rect.size();
     }
 
     if (m_floating_rect.is_empty())
@@ -181,7 +195,7 @@ bool Window::apply_minimum_size(Gfx::IntRect& rect)
     return did_size_clamp;
 }
 
-void Window::set_minimum_size(Gfx::IntSize const& size)
+void Window::set_minimum_size(Gfx::IntSize size)
 {
     VERIFY(size.width() >= 0 && size.height() >= 0);
     if (m_minimum_size == size)
@@ -195,7 +209,7 @@ void Window::handle_mouse_event(MouseEvent const& event)
 
     switch (event.type()) {
     case Event::MouseMove:
-        m_client->async_mouse_move(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y(), event.is_drag(), event.mime_types());
+        m_client->async_mouse_move(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y());
         break;
     case Event::MouseDown:
         m_client->async_mouse_down(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y());
@@ -228,6 +242,11 @@ void Window::update_window_menu_items()
     m_window_menu_close_item->set_enabled(m_closeable);
 
     m_window_menu_move_item->set_enabled(m_minimized_state == WindowMinimizedState::None && !is_maximized() && !m_fullscreen);
+
+    if (m_window_menu_always_on_top_item)
+        m_window_menu_always_on_top_item->set_checked(m_always_on_top);
+
+    m_window_menu->update_alt_shortcuts_for_items();
 }
 
 void Window::set_minimized(bool minimized)
@@ -274,7 +293,6 @@ void Window::set_minimizable(bool minimizable)
         return;
     m_minimizable = minimizable;
     update_window_menu_items();
-    // TODO: Hide/show (or alternatively change enabled state of) window minimize button dynamically depending on value of m_minimizable
 }
 
 void Window::set_closeable(bool closeable)
@@ -322,7 +340,7 @@ void Window::start_minimize_animation()
     }
     m_animation = Animation::create();
     m_animation->set_duration(150);
-    m_animation->on_update = [this](float progress, Gfx::Painter& painter, Screen& screen, Gfx::DisjointRectSet& flush_rects) {
+    m_animation->on_update = [this](float progress, Gfx::Painter& painter, Screen& screen, Gfx::DisjointIntRectSet& flush_rects) {
         Gfx::PainterStateSaver saver(painter);
         painter.set_draw_op(Gfx::Painter::DrawOp::Invert);
 
@@ -350,7 +368,7 @@ void Window::start_launch_animation(Gfx::IntRect const& launch_origin_rect)
 
     m_animation = Animation::create();
     m_animation->set_duration(150);
-    m_animation->on_update = [this, launch_origin_rect](float progress, Gfx::Painter& painter, Screen& screen, Gfx::DisjointRectSet& flush_rects) {
+    m_animation->on_update = [this, launch_origin_rect](float progress, Gfx::Painter& painter, Screen& screen, Gfx::DisjointIntRectSet& flush_rects) {
         Gfx::PainterStateSaver saver(painter);
         painter.set_draw_op(Gfx::Painter::DrawOp::Invert);
 
@@ -364,18 +382,6 @@ void Window::start_launch_animation(Gfx::IntRect const& launch_origin_rect)
         m_animation = nullptr;
     };
     m_animation->start();
-}
-
-void Window::set_opacity(float opacity)
-{
-    if (m_opacity == opacity)
-        return;
-    bool was_opaque = is_opaque();
-    m_opacity = opacity;
-    if (was_opaque != is_opaque())
-        Compositor::the().invalidate_occlusions();
-    invalidate(false);
-    WindowManager::the().notify_opacity_changed(*this);
 }
 
 void Window::set_has_alpha_channel(bool value)
@@ -402,12 +408,17 @@ void Window::set_maximized(bool maximized)
         return;
     m_tile_type = maximized ? WindowTileType::Maximized : WindowTileType::None;
     update_window_menu_items();
-    if (maximized)
+    if (maximized) {
+        exit_roll_up_mode();
         set_rect(WindowManager::the().tiled_window_rect(*this));
-    else
+    } else {
+        exit_roll_up_mode();
         set_rect(m_floating_rect);
+    }
+
     m_frame.did_set_maximized({}, maximized);
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
+    send_resize_event_to_client();
+    send_move_event_to_client();
     set_default_positioned(false);
 
     WindowManager::the().notify_minimization_state_changed(*this);
@@ -431,7 +442,6 @@ void Window::set_resizable(bool resizable)
         return;
     m_resizable = resizable;
     update_window_menu_items();
-    // TODO: Hide/show (or alternatively change enabled state of) window maximize button dynamically depending on value of is_resizable()
 }
 
 void Window::event(Core::Event& event)
@@ -442,9 +452,9 @@ void Window::event(Core::Event& event)
         return;
     }
 
-    if (blocking_modal_window()) {
+    if (blocking_modal_window() && type() != WindowType::Popup) {
         // Allow windows to process their inactivity after being blocked
-        if (event.type() != Event::WindowDeactivated && event.type() != Event::WindowInputLeft)
+        if (event.type() != Event::WindowDeactivated && event.type() != Event::WindowInputPreempted)
             return;
     }
 
@@ -465,6 +475,7 @@ void Window::event(Core::Event& event)
         m_client->async_key_up(m_window_id,
             (u32) static_cast<KeyEvent const&>(event).code_point(),
             (u32) static_cast<KeyEvent const&>(event).key(),
+            (u8) static_cast<KeyEvent const&>(event).map_entry_index(),
             static_cast<KeyEvent const&>(event).modifiers(),
             (u32) static_cast<KeyEvent const&>(event).scancode());
         break;
@@ -474,17 +485,20 @@ void Window::event(Core::Event& event)
     case Event::WindowDeactivated:
         m_client->async_window_deactivated(m_window_id);
         break;
-    case Event::WindowInputEntered:
-        m_client->async_window_input_entered(m_window_id);
+    case Event::WindowInputPreempted:
+        m_client->async_window_input_preempted(m_window_id);
         break;
-    case Event::WindowInputLeft:
-        m_client->async_window_input_left(m_window_id);
+    case Event::WindowInputRestored:
+        m_client->async_window_input_restored(m_window_id);
         break;
     case Event::WindowCloseRequest:
         m_client->async_window_close_request(m_window_id);
         break;
     case Event::WindowResized:
         m_client->async_window_resized(m_window_id, static_cast<ResizeEvent const&>(event).rect());
+        break;
+    case Event::WindowMoved:
+        m_client->async_window_moved(m_window_id, static_cast<MoveEvent const&>(event).rect());
         break;
     default:
         break;
@@ -494,28 +508,41 @@ void Window::event(Core::Event& event)
 void Window::handle_keydown_event(KeyEvent const& event)
 {
     if (event.modifiers() == Mod_Alt && event.key() == Key_Space && type() == WindowType::Normal && !is_frameless()) {
-        auto position = frame().titlebar_rect().bottom_left().translated(frame().rect().location());
+        auto position = frame().titlebar_rect().bottom_left().moved_up(1).translated(frame().rect().location());
         popup_window_menu(position, WindowMenuDefaultAction::Close);
         return;
     }
     if (event.modifiers() == Mod_Alt && event.code_point() && m_menubar.has_menus()) {
-        Menu* menu_to_open = nullptr;
-        m_menubar.for_each_menu([&](Menu& menu) {
-            if (to_ascii_lowercase(menu.alt_shortcut_character()) == to_ascii_lowercase(event.code_point())) {
-                menu_to_open = &menu;
-                return IterationDecision::Break;
-            }
-            return IterationDecision::Continue;
-        });
+        // When handling alt shortcuts, we only care about the key that has been pressed in addition
+        // to alt, not the code point that has been mapped to alt+[key], so we have to look up the
+        // kernel map_entry_index value directly from the "unmodified" character map.
+        auto character_map_or_error = Keyboard::CharacterMap::fetch_system_map();
+        if (!character_map_or_error.is_error()) {
+            auto& character_map = character_map_or_error.value();
 
-        if (menu_to_open) {
-            frame().open_menubar_menu(*menu_to_open);
-            if (!menu_to_open->is_empty())
-                menu_to_open->set_hovered_index(0);
-            return;
+            auto index = event.map_entry_index();
+            if (index != 0xff) {
+                u32 character = to_ascii_lowercase(character_map.character_map_data().map[index]);
+
+                Menu* menu_to_open = nullptr;
+                m_menubar.for_each_menu([&](Menu& menu) {
+                    if (to_ascii_lowercase(menu.alt_shortcut_character()) == character) {
+                        menu_to_open = &menu;
+                        return IterationDecision::Break;
+                    }
+                    return IterationDecision::Continue;
+                });
+
+                if (menu_to_open) {
+                    frame().open_menubar_menu(*menu_to_open);
+                    if (!menu_to_open->is_empty())
+                        menu_to_open->set_hovered_index(0);
+                    return;
+                }
+            }
         }
     }
-    m_client->async_key_down(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode());
+    m_client->async_key_down(m_window_id, (u32)event.code_point(), (u32)event.key(), (u8)event.map_entry_index(), event.modifiers(), (u32)event.scancode());
 }
 
 void Window::set_visible(bool b)
@@ -659,6 +686,8 @@ bool Window::is_active() const
 Window* Window::blocking_modal_window()
 {
     auto maybe_blocker = WindowManager::the().for_each_window_in_modal_chain(*this, [&](auto& window) {
+        if (parent_window() == window.parent_window() && is_blocking())
+            return IterationDecision::Continue;
         if (is_descendant_of(window))
             return IterationDecision::Continue;
         if (window.is_blocking() && this != &window)
@@ -688,7 +717,7 @@ void Window::request_update(Gfx::IntRect const& rect, bool ignore_occlusion)
 void Window::ensure_window_menu()
 {
     if (!m_window_menu) {
-        m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)");
+        m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)"_string);
         m_window_menu->set_window_menu_of(*this);
 
         auto minimize_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::MinimizeOrUnminimize, "");
@@ -706,6 +735,12 @@ void Window::ensure_window_menu()
 
         m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
 
+        auto roll_up_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::ToggleWindowRollUp, "&Roll Up");
+        m_window_menu_roll_up_item = roll_up_item.ptr();
+        m_window_menu_roll_up_item->set_checked(!m_should_show_window_content);
+        roll_up_item->set_checkable(true);
+        m_window_menu->add_item(move(roll_up_item));
+
         auto menubar_visibility_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::ToggleMenubarVisibility, "Menu &Bar");
         m_window_menu_menubar_visibility_item = menubar_visibility_item.ptr();
         menubar_visibility_item->set_checkable(true);
@@ -721,6 +756,13 @@ void Window::ensure_window_menu()
             m_window_menu->add_item(move(pin_item));
             m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
         }
+
+        auto add_to_quick_launch_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::AddToQuickLaunch, "&Add to Quick Launch");
+        m_window_menu_add_to_quick_launch_item = add_to_quick_launch_item.ptr();
+        m_window_menu_add_to_quick_launch_item->set_icon(&pin_icon());
+        m_window_menu->add_item(move(add_to_quick_launch_item));
+
+        m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
 
         auto close_item = make<MenuItem>(*m_window_menu, (unsigned)WindowMenuAction::Close, "&Close");
         m_window_menu_close_item = close_item.ptr();
@@ -764,6 +806,23 @@ void Window::handle_window_menu_action(WindowMenuAction action)
         invalidate_last_rendered_screen_rects();
         break;
     }
+    case WindowMenuAction::ToggleWindowRollUp: {
+        auto& item = *m_window_menu->item_by_identifier((unsigned)action);
+        frame().invalidate();
+        item.set_checked(!item.is_checked());
+        m_should_show_window_content = !item.is_checked();
+        if (!m_should_show_window_content) {
+            m_saved_before_roll_up_rect = m_rect;
+            m_rect.set_height(0);
+        } else {
+            m_rect.set_height(m_saved_before_roll_up_rect.height());
+        }
+
+        frame().invalidate();
+        recalculate_rect();
+        invalidate_last_rendered_screen_rects();
+        break;
+    }
     case WindowMenuAction::ToggleAlwaysOnTop: {
         auto& item = *m_window_menu->item_by_identifier((unsigned)action);
         auto new_is_checked = !item.is_checked();
@@ -771,10 +830,15 @@ void Window::handle_window_menu_action(WindowMenuAction action)
         WindowManager::the().set_always_on_top(*this, new_is_checked);
         break;
     }
+    case WindowMenuAction::AddToQuickLaunch: {
+        if (m_process_id.has_value())
+            WindowManager::the().on_add_to_quick_launch(m_process_id.value());
+        break;
+    }
     }
 }
 
-void Window::popup_window_menu(Gfx::IntPoint const& position, WindowMenuDefaultAction default_action)
+void Window::popup_window_menu(Gfx::IntPoint position, WindowMenuDefaultAction default_action)
 {
     ensure_window_menu();
     if (default_action == WindowMenuDefaultAction::BasedOnWindowState) {
@@ -825,8 +889,9 @@ void Window::set_fullscreen(bool fullscreen)
         new_window_rect = m_saved_nonfullscreen_rect;
     }
 
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(new_window_rect));
     set_rect(new_window_rect);
+    send_resize_event_to_client();
+    send_move_event_to_client();
 }
 
 WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
@@ -840,7 +905,7 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         bool tiling_to_left = current_tile_type == WindowTileType::Left || current_tile_type == WindowTileType::TopLeft || current_tile_type == WindowTileType::BottomLeft;
         bool tiling_to_right = current_tile_type == WindowTileType::Right || current_tile_type == WindowTileType::TopRight || current_tile_type == WindowTileType::BottomRight;
 
-        auto ideal_tiled_rect = WindowManager::the().tiled_window_rect(*this, current_tile_type);
+        auto ideal_tiled_rect = WindowManager::the().tiled_window_rect(*this, window_screen, current_tile_type);
         bool same_top = ideal_tiled_rect.top() == rect.top();
         bool same_left = ideal_tiled_rect.left() == rect.left();
         bool same_right = ideal_tiled_rect.right() == rect.right();
@@ -852,9 +917,9 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         if (tiling_to_top && same_top && same_left && same_right)
             return WindowTileType::Top;
         else if ((tiling_to_top || tiling_to_left) && same_top && same_left)
-            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Bottom).bottom() ? WindowTileType::Left : WindowTileType::TopLeft;
+            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Bottom).bottom() ? WindowTileType::Left : WindowTileType::TopLeft;
         else if ((tiling_to_top || tiling_to_right) && same_top && same_right)
-            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Bottom).bottom() ? WindowTileType::Right : WindowTileType::TopRight;
+            return rect.bottom() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Bottom).bottom() ? WindowTileType::Right : WindowTileType::TopRight;
         else if (tiling_to_left && same_left && same_top && same_bottom)
             return WindowTileType::Left;
         else if (tiling_to_right && same_right && same_top && same_bottom)
@@ -862,9 +927,9 @@ WindowTileType Window::tile_type_based_on_rect(Gfx::IntRect const& rect) const
         else if (tiling_to_bottom && same_bottom && same_left && same_right)
             return WindowTileType::Bottom;
         else if ((tiling_to_bottom || tiling_to_left) && same_bottom && same_left)
-            return rect.top() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Left).top() ? WindowTileType::Left : WindowTileType::BottomLeft;
+            return rect.top() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Left).top() ? WindowTileType::Left : WindowTileType::BottomLeft;
         else if ((tiling_to_bottom || tiling_to_right) && same_bottom && same_right)
-            return rect.top() == WindowManager::the().tiled_window_rect(*this, WindowTileType::Right).top() ? WindowTileType::Right : WindowTileType::BottomRight;
+            return rect.top() == WindowManager::the().tiled_window_rect(*this, window_screen, WindowTileType::Right).top() ? WindowTileType::Right : WindowTileType::BottomRight;
     }
     return tile_type;
 }
@@ -893,14 +958,11 @@ bool Window::set_untiled()
     VERIFY(!resize_aspect_ratio().has_value());
 
     m_tile_type = WindowTileType::None;
-    set_rect(m_floating_rect);
-
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
-
+    tile_type_changed();
     return true;
 }
 
-void Window::set_tiled(WindowTileType tile_type)
+void Window::set_tiled(WindowTileType tile_type, Optional<Screen const&> tile_on_screen)
 {
     VERIFY(tile_type != WindowTileType::None);
 
@@ -914,9 +976,40 @@ void Window::set_tiled(WindowTileType tile_type)
         set_maximized(false);
 
     m_tile_type = tile_type;
+    tile_type_changed(tile_on_screen);
+}
 
-    set_rect(WindowManager::the().tiled_window_rect(*this, tile_type));
+void Window::exit_roll_up_mode()
+{
+    if (m_should_show_window_content)
+        return;
+    m_rect.set_height(m_saved_before_roll_up_rect.height());
+    m_should_show_window_content = true;
+    if (m_window_menu_roll_up_item)
+        m_window_menu_roll_up_item->set_checked(false);
+}
+
+void Window::tile_type_changed(Optional<Screen const&> tile_on_screen)
+{
+    if (m_tile_type != WindowTileType::None) {
+        exit_roll_up_mode();
+        set_rect(WindowManager::the().tiled_window_rect(*this, tile_on_screen, m_tile_type));
+    } else {
+        set_rect(m_floating_rect);
+    }
+
+    send_resize_event_to_client();
+    send_move_event_to_client();
+}
+
+void Window::send_resize_event_to_client()
+{
     Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
+}
+
+void Window::send_move_event_to_client()
+{
+    Core::EventLoop::current().post_event(*this, make<MoveEvent>(m_rect));
 }
 
 void Window::detach_client(Badge<ConnectionFromClient>)
@@ -931,7 +1024,7 @@ void Window::recalculate_rect()
 
     bool send_event = true;
     if (is_tiled()) {
-        set_rect(WindowManager::the().tiled_window_rect(*this, m_tile_type));
+        set_rect(WindowManager::the().tiled_window_rect(*this, {}, m_tile_type));
     } else if (type() == WindowType::Desktop) {
         set_rect(WindowManager::the().arena_rect_for_type(Screen::main(), WindowType::Desktop));
     } else {
@@ -939,7 +1032,7 @@ void Window::recalculate_rect()
     }
 
     if (send_event) {
-        Core::EventLoop::current().post_event(*this, make<ResizeEvent>(m_rect));
+        send_resize_event_to_client();
     }
 }
 
@@ -966,13 +1059,6 @@ Window* Window::modeless_ancestor()
     return nullptr;
 }
 
-bool Window::is_capturing_active_input_from(Window const& window) const
-{
-    if (!is_capturing_input())
-        return false;
-    return parent_window() == &window;
-}
-
 void Window::set_progress(Optional<int> progress)
 {
     if (m_progress == progress)
@@ -990,7 +1076,7 @@ bool Window::is_descendant_of(Window& window) const
     return false;
 }
 
-Optional<HitTestResult> Window::hit_test(Gfx::IntPoint const& position, bool include_frame)
+Optional<HitTestResult> Window::hit_test(Gfx::IntPoint position, bool include_frame)
 {
     if (!m_hit_testing_enabled)
         return {};
@@ -1050,12 +1136,32 @@ void Window::set_modified(bool modified)
     frame().invalidate_titlebar();
 }
 
-String Window::computed_title() const
+ByteString Window::computed_title() const
 {
-    String title = m_title.replace("[*]"sv, is_modified() ? " (*)"sv : ""sv, ReplaceMode::FirstOnly);
+    ByteString title = m_title.replace("[*]"sv, is_modified() ? " (*)"sv : ""sv, ReplaceMode::FirstOnly);
+    if (m_title_username.has_value())
+        title = ByteString::formatted("{} [{}]", title, m_title_username.value());
     if (client() && client()->is_unresponsive())
-        return String::formatted("{} (Not responding)", title);
+        return ByteString::formatted("{} (Not responding)", title);
     return title;
+}
+
+ErrorOr<Optional<ByteString>> Window::compute_title_username(ConnectionFromClient* client)
+{
+    if (!client)
+        return Error::from_string_literal("Tried to compute title username without a client");
+    auto stats = TRY(Core::ProcessStatisticsReader::get_all(true));
+    pid_t client_pid = TRY(client->socket().peer_pid());
+    auto client_stat = stats.processes.first_matching([&](auto& stat) { return stat.pid == client_pid; });
+    if (!client_stat.has_value())
+        return Error::from_string_literal("Failed to find client process stat");
+    pid_t login_session_pid = TRY(Core::SessionManagement::root_session_id(client_pid));
+    auto login_session_stat = stats.processes.first_matching([&](auto& stat) { return stat.pid == login_session_pid; });
+    if (!login_session_stat.has_value())
+        return Error::from_string_literal("Failed to find login process stat");
+    if (login_session_stat.value().uid == client_stat.value().uid)
+        return Optional<ByteString> {};
+    return client_stat.value().username;
 }
 
 }

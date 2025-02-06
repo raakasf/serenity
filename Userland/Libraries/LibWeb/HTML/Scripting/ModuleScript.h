@@ -7,7 +7,6 @@
 #pragma once
 
 #include <LibJS/SourceTextModule.h>
-#include <LibWeb/HTML/Scripting/ModuleMap.h>
 #include <LibWeb/HTML/Scripting/Script.h>
 
 namespace Web::HTML {
@@ -20,16 +19,17 @@ public:
     virtual ~ModuleScript() override;
 
 protected:
-    ModuleScript(AK::URL base_url, String filename, EnvironmentSettingsObject& environment_settings_object);
+    ModuleScript(URL::URL base_url, ByteString filename, EnvironmentSettingsObject& environment_settings_object);
 };
 
 class JavaScriptModuleScript final : public ModuleScript {
     JS_CELL(JavaScriptModuleScript, ModuleScript);
+    JS_DECLARE_ALLOCATOR(JavaScriptModuleScript);
 
 public:
     virtual ~JavaScriptModuleScript() override;
 
-    static JS::GCPtr<JavaScriptModuleScript> create(String const& filename, StringView source, EnvironmentSettingsObject&, AK::URL base_url);
+    static WebIDL::ExceptionOr<JS::GCPtr<JavaScriptModuleScript>> create(ByteString const& filename, StringView source, EnvironmentSettingsObject&, URL::URL base_url);
 
     enum class PreventErrorReporting {
         Yes,
@@ -38,11 +38,11 @@ public:
 
     JS::Promise* run(PreventErrorReporting = PreventErrorReporting::No);
 
-    JS::SourceTextModule const* record() const { return m_record.ptr(); };
-    JS::SourceTextModule* record() { return m_record.ptr(); };
+    JS::SourceTextModule const* record() const { return m_record.ptr(); }
+    JS::SourceTextModule* record() { return m_record.ptr(); }
 
 protected:
-    JavaScriptModuleScript(AK::URL base_url, String filename, EnvironmentSettingsObject& environment_settings_object);
+    JavaScriptModuleScript(URL::URL base_url, ByteString filename, EnvironmentSettingsObject& environment_settings_object);
 
 private:
     virtual void visit_edges(JS::Cell::Visitor&) override;

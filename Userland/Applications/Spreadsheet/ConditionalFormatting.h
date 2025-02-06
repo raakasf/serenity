@@ -7,7 +7,7 @@
 #pragma once
 
 #include "Forward.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibGUI/AbstractScrollableWidget.h>
 #include <LibGfx/Color.h>
 
@@ -19,7 +19,7 @@ struct Format {
 };
 
 struct ConditionalFormat : public Format {
-    String condition;
+    ByteString condition;
 };
 
 enum class FormatType {
@@ -52,7 +52,7 @@ private:
     ConditionsView();
 
     Vector<ConditionalFormat>* m_formats { nullptr };
-    NonnullRefPtrVector<GUI::Widget> m_widgets;
+    Vector<NonnullRefPtr<GUI::Widget>> m_widgets;
 };
 
 }

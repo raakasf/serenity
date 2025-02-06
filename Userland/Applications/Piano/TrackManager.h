@@ -10,7 +10,6 @@
 #pragma once
 
 #include "Music.h"
-#include <AK/Array.h>
 #include <AK/FixedArray.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullOwnPtr.h>
@@ -28,12 +27,14 @@ public:
     ~TrackManager() = default;
 
     NonnullRefPtr<DSP::NoteTrack> current_track() { return *m_tracks[m_current_track]; }
-    int track_count() { return m_tracks.size(); };
+    size_t track_count() { return m_tracks.size(); }
+    size_t current_track_index() const { return m_current_track; }
     void set_current_track(size_t track_index)
     {
-        VERIFY((int)track_index < track_count());
+        VERIFY(track_index < track_count());
         m_current_track = track_index;
     }
+    Span<NonnullRefPtr<DSP::NoteTrack>> tracks() { return m_tracks.span(); }
 
     NonnullRefPtr<DSP::Transport> transport() const { return m_transport; }
     NonnullRefPtr<DSP::Keyboard> keyboard() const { return m_keyboard; }
@@ -42,7 +43,6 @@ public:
 
     void fill_buffer(FixedArray<DSP::Sample>&);
     void reset();
-    void set_keyboard_note(int note, DSP::Keyboard::Switch note_switch);
     void set_should_loop(bool b) { m_should_loop = b; }
     void add_track();
     int next_track_index() const;

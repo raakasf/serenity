@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,6 +15,7 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Intl/AbstractOperations.h>
 #include <LibJS/Runtime/Intl/Locale.h>
+#include <LibJS/Runtime/ValueInlines.h>
 #include <LibLocale/Locale.h>
 
 namespace JS::Intl {
@@ -22,7 +23,7 @@ namespace JS::Intl {
 // 6.2.2 IsStructurallyValidLanguageTag ( locale ), https://tc39.es/ecma402/#sec-isstructurallyvalidlanguagetag
 Optional<::Locale::LocaleID> is_structurally_valid_language_tag(StringView locale)
 {
-    auto contains_duplicate_variant = [](auto& variants) {
+    auto contains_duplicate_variant = [&](auto& variants) {
         if (variants.is_empty())
             return false;
 
@@ -65,6 +66,7 @@ Optional<::Locale::LocaleID> is_structurally_valid_language_tag(StringView local
 
         if (unique_keys.contains_slow(key))
             return {};
+
         unique_keys.append(key);
 
         // if a transformed_extensions component that contains a tlang component is present, then
@@ -228,7 +230,7 @@ ThrowCompletionOr<Vector<String>> canonicalize_locale_list(VM& vm, Value locales
 
             // ii. If Type(kValue) is not String or Object, throw a TypeError exception.
             if (!key_value.is_string() && !key_value.is_object())
-                return vm.throw_completion<TypeError>(ErrorType::NotAnObjectOrString, key_value.to_string_without_side_effects());
+                return vm.throw_completion<TypeError>(ErrorType::NotAnObjectOrString, key_value);
 
             String tag;
 
@@ -263,14 +265,14 @@ ThrowCompletionOr<Vector<String>> canonicalize_locale_list(VM& vm, Value locales
 }
 
 // 9.2.2 BestAvailableLocale ( availableLocales, locale ), https://tc39.es/ecma402/#sec-bestavailablelocale
-Optional<String> best_available_locale(StringView locale)
+Optional<StringView> best_available_locale(StringView locale)
 {
     // 1. Let candidate be locale.
     StringView candidate = locale;
 
     // 2. Repeat,
     while (true) {
-        // a. If availableLocales contains an element equal to candidate, return candidate.
+        // a. If availableLocales contains candidate, return candidate.
         if (::Locale::is_locale_available(candidate))
             return candidate;
 
@@ -314,7 +316,7 @@ static MatcherResult lookup_matcher(Vector<String> const& requested_locales)
         // c. If availableLocale is not undefined, then
         if (available_locale.has_value()) {
             // i. Set result.[[locale]] to availableLocale.
-            result.locale = available_locale.release_value();
+            result.locale = MUST(String::from_utf8(*available_locale));
 
             // ii. If locale and noExtensionsLocale are not the same String value, then
             if (locale != no_extensions_locale) {
@@ -330,7 +332,7 @@ static MatcherResult lookup_matcher(Vector<String> const& requested_locales)
 
     // 3. Let defLocale be ! DefaultLocale().
     // 4. Set result.[[locale]] to defLocale.
-    result.locale = ::Locale::default_locale();
+    result.locale = MUST(String::from_utf8(::Locale::default_locale()));
 
     // 5. Return result.
     return result;
@@ -352,6 +354,7 @@ String insert_unicode_extension_and_canonicalize(::Locale::LocaleID locale, ::Lo
     // of that string. LibUnicode gives us the parsed locale in a structure, so we can mutate that
     // structure directly.
     locale.extensions.append(move(extension));
+
     return JS::Intl::canonicalize_unicode_locale_id(locale);
 }
 
@@ -376,14 +379,14 @@ static auto& find_key_in_value(T& value, StringView key)
 }
 
 // 9.2.7 ResolveLocale ( availableLocales, requestedLocales, options, relevantExtensionKeys, localeData ), https://tc39.es/ecma402/#sec-resolvelocale
-LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptions const& options, Span<StringView const> relevant_extension_keys)
+LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptions const& options, ReadonlySpan<StringView> relevant_extension_keys)
 {
     // 1. Let matcher be options.[[localeMatcher]].
     auto const& matcher = options.locale_matcher;
     MatcherResult matcher_result;
 
     // 2. If matcher is "lookup", then
-    if (matcher.is_string() && (matcher.as_string().string() == "lookup"sv)) {
+    if (matcher.is_string() && (matcher.as_string().utf8_string_view()) == "lookup"sv) {
         // a. Let r be ! LookupMatcher(availableLocales, requestedLocales).
         matcher_result = lookup_matcher(requested_locales);
     }
@@ -433,7 +436,7 @@ LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptio
         //       alphabetically, so we get the locale's preferred value from LibUnicode.
         Optional<String> value;
         if (auto preference = ::Locale::get_preferred_keyword_value_for_locale(found_locale, key); preference.has_value())
-            value = *preference;
+            value = MUST(String::from_utf8(*preference));
 
         // g. Let supportedExtensionAddition be "".
         Optional<::Locale::Keyword> supported_extension_addition {};
@@ -456,16 +459,16 @@ LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptio
                     value = move(requested_value);
 
                     // ii. Let supportedExtensionAddition be the string-concatenation of "-", key, "-", and value.
-                    supported_extension_addition = ::Locale::Keyword { key, move(entry.value) };
+                    supported_extension_addition = ::Locale::Keyword { MUST(String::from_utf8(key)), move(entry.value) };
                 }
             }
             // 4. Else if keyLocaleData contains "true", then
             else if (key_locale_data.contains_slow("true"sv)) {
                 // a. Let value be "true".
-                value = "true"sv;
+                value = "true"_string;
 
                 // b. Let supportedExtensionAddition be the string-concatenation of "-" and key.
-                supported_extension_addition = ::Locale::Keyword { key, {} };
+                supported_extension_addition = ::Locale::Keyword { MUST(String::from_utf8(key)), {} };
             }
 
             break;
@@ -485,36 +488,33 @@ LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptio
             // 3. If optionsValue is the empty String, then
             if (options_value->is_empty()) {
                 // a. Let optionsValue be "true".
-                options_value = "true"sv;
+                options_value = "true"_string;
             }
         }
 
-        // iv. If keyLocaleData contains optionsValue, then
-        if (options_value.has_value() && key_locale_data.contains_slow(*options_value)) {
-            // 1. If SameValue(optionsValue, value) is false, then
-            if (options_value != value) {
-                // a. Let value be optionsValue.
-                value = move(options_value);
+        // iv. If SameValue(optionsValue, value) is false and keyLocaleData contains optionsValue, then
+        if (options_value.has_value() && (options_value != value) && key_locale_data.contains_slow(*options_value)) {
+            // 1. Let value be optionsValue.
+            value = move(options_value);
 
-                // b. Let supportedExtensionAddition be "".
-                supported_extension_addition.clear();
-            }
+            // 2. Let supportedExtensionAddition be "".
+            supported_extension_addition.clear();
         }
 
         // j. Set result.[[<key>]] to value.
         find_key_in_value(result, key) = move(value);
 
-        // k. Append supportedExtensionAddition to supportedExtension.
+        // k. Set supportedExtension to the string-concatenation of supportedExtension and supportedExtensionAddition.
         if (supported_extension_addition.has_value())
             supported_extension.keywords.append(supported_extension_addition.release_value());
     }
 
-    // 10. If the number of elements in supportedExtension is greater than 2, then
+    // 10. If supportedExtension is not "-u", then
     if (!supported_extension.keywords.is_empty()) {
         auto locale_id = ::Locale::parse_unicode_locale_id(found_locale);
         VERIFY(locale_id.has_value());
 
-        // a. Let foundLocale be InsertUnicodeExtensionAndCanonicalize(foundLocale, supportedExtension).
+        // a. Set foundLocale to InsertUnicodeExtensionAndCanonicalize(foundLocale, supportedExtension).
         found_locale = insert_unicode_extension_and_canonicalize(locale_id.release_value(), move(supported_extension));
     }
 
@@ -526,7 +526,7 @@ LocaleResult resolve_locale(Vector<String> const& requested_locales, LocaleOptio
 }
 
 // 9.2.8 LookupSupportedLocales ( availableLocales, requestedLocales ), https://tc39.es/ecma402/#sec-lookupsupportedlocales
-Vector<String> lookup_supported_locales(Vector<String> const& requested_locales)
+static Vector<String> lookup_supported_locales(Vector<String> const& requested_locales)
 {
     // 1. Let subset be a new empty List.
     Vector<String> subset;
@@ -553,7 +553,7 @@ Vector<String> lookup_supported_locales(Vector<String> const& requested_locales)
 }
 
 // 9.2.9 BestFitSupportedLocales ( availableLocales, requestedLocales ), https://tc39.es/ecma402/#sec-bestfitsupportedlocales
-Vector<String> best_fit_supported_locales(Vector<String> const& requested_locales)
+static Vector<String> best_fit_supported_locales(Vector<String> const& requested_locales)
 {
     // The BestFitSupportedLocales abstract operation returns the subset of the provided BCP 47
     // language priority list requestedLocales for which availableLocales has a matching locale
@@ -572,13 +572,13 @@ ThrowCompletionOr<Array*> supported_locales(VM& vm, Vector<String> const& reques
     // 1. Set options to ? CoerceOptionsToObject(options).
     auto* options_object = TRY(coerce_options_to_object(vm, options));
 
-    // 2. Let matcher be ? GetOption(options, "localeMatcher", "string", « "lookup", "best fit" », "best fit").
+    // 2. Let matcher be ? GetOption(options, "localeMatcher", string, « "lookup", "best fit" », "best fit").
     auto matcher = TRY(get_option(vm, *options_object, vm.names.localeMatcher, OptionType::String, { "lookup"sv, "best fit"sv }, "best fit"sv));
 
     Vector<String> supported_locales;
 
     // 3. If matcher is "best fit", then
-    if (matcher.as_string().string() == "best fit"sv) {
+    if (matcher.as_string().utf8_string_view() == "best fit"sv) {
         // a. Let supportedLocales be BestFitSupportedLocales(availableLocales, requestedLocales).
         supported_locales = best_fit_supported_locales(requested_locales);
     }
@@ -589,7 +589,7 @@ ThrowCompletionOr<Array*> supported_locales(VM& vm, Vector<String> const& reques
     }
 
     // 5. Return CreateArrayFromList(supportedLocales).
-    return Array::create_from<String>(realm, supported_locales, [&vm](auto& locale) { return js_string(vm, locale); });
+    return Array::create_from<String>(realm, supported_locales, [&vm](auto& locale) { return PrimitiveString::create(vm, move(locale)); }).ptr();
 }
 
 // 9.2.12 CoerceOptionsToObject ( options ), https://tc39.es/ecma402/#sec-coerceoptionstoobject
@@ -600,17 +600,17 @@ ThrowCompletionOr<Object*> coerce_options_to_object(VM& vm, Value options)
     // 1. If options is undefined, then
     if (options.is_undefined()) {
         // a. Return OrdinaryObjectCreate(null).
-        return Object::create(realm, nullptr);
+        return Object::create(realm, nullptr).ptr();
     }
 
     // 2. Return ? ToObject(options).
-    return TRY(options.to_object(vm));
+    return TRY(options.to_object(vm)).ptr();
 }
 
 // NOTE: 9.2.13 GetOption has been removed and is being pulled in from ECMA-262 in the Temporal proposal.
 
-// 1.2.12 GetStringOrBooleanOption ( options, property, values, trueValue, falsyValue, fallback ), https://tc39.es/proposal-intl-numberformat-v3/out/negotiation/proposed.html#sec-getstringorbooleanoption
-ThrowCompletionOr<StringOrBoolean> get_string_or_boolean_option(VM& vm, Object const& options, PropertyKey const& property, Span<StringView const> values, StringOrBoolean true_value, StringOrBoolean falsy_value, StringOrBoolean fallback)
+// 9.2.14 GetBooleanOrStringNumberFormatOption ( options, property, stringValues, fallback ), https://tc39.es/ecma402/#sec-getbooleanorstringnumberformatoption
+ThrowCompletionOr<StringOrBoolean> get_boolean_or_string_number_format_option(VM& vm, Object const& options, PropertyKey const& property, ReadonlySpan<StringView> string_values, StringOrBoolean fallback)
 {
     // 1. Let value be ? Get(options, property).
     auto value = TRY(options.get(property));
@@ -619,35 +619,27 @@ ThrowCompletionOr<StringOrBoolean> get_string_or_boolean_option(VM& vm, Object c
     if (value.is_undefined())
         return fallback;
 
-    // 3. If value is true, return trueValue.
+    // 3. If value is true, return true.
     if (value.is_boolean() && value.as_bool())
-        return true_value;
+        return StringOrBoolean { true };
 
-    // 4. Let valueBoolean be ToBoolean(value).
-    auto value_boolean = value.to_boolean();
+    // 4. If ToBoolean(value) is false, return false.
+    if (!value.to_boolean())
+        return StringOrBoolean { false };
 
-    // 5. If valueBoolean is false, return falsyValue.
-    if (!value_boolean)
-        return falsy_value;
-
-    // 6. Let value be ? ToString(value).
+    // 5. Let value be ? ToString(value).
     auto value_string = TRY(value.to_string(vm));
 
-    // 7. NOTE: For historical reasons, the strings "true" and "false" are treated the same as the boolean value true.
-    // 8. If value is "true" or "false", return fallback.
-    if (value_string.is_one_of("true"sv, "false"sv))
-        return fallback;
-
-    // 9. If values does not contain an element equal to value, throw a RangeError exception.
-    auto it = find(values.begin(), values.end(), value_string);
-    if (it == values.end())
+    // 6. If stringValues does not contain value, throw a RangeError exception.
+    auto it = find(string_values.begin(), string_values.end(), value_string.bytes_as_string_view());
+    if (it == string_values.end())
         return vm.throw_completion<RangeError>(ErrorType::OptionIsNotValidValue, value_string, property.as_string());
 
-    // 10. Return value.
+    // 7. Return value.
     return StringOrBoolean { *it };
 }
 
-// 9.2.14 DefaultNumberOption ( value, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-defaultnumberoption
+// 9.2.15 DefaultNumberOption ( value, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-defaultnumberoption
 ThrowCompletionOr<Optional<int>> default_number_option(VM& vm, Value value, int minimum, int maximum, Optional<int> fallback)
 {
     // 1. If value is undefined, return fallback.
@@ -665,7 +657,7 @@ ThrowCompletionOr<Optional<int>> default_number_option(VM& vm, Value value, int 
     return floor(value.as_double());
 }
 
-// 9.2.15 GetNumberOption ( options, property, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-getnumberoption
+// 9.2.16 GetNumberOption ( options, property, minimum, maximum, fallback ), https://tc39.es/ecma402/#sec-getnumberoption
 ThrowCompletionOr<Optional<int>> get_number_option(VM& vm, Object const& options, PropertyKey const& property, int minimum, int maximum, Optional<int> fallback)
 {
     // 1. Assert: Type(options) is Object.
@@ -677,7 +669,7 @@ ThrowCompletionOr<Optional<int>> get_number_option(VM& vm, Object const& options
     return default_number_option(vm, value, minimum, maximum, move(fallback));
 }
 
-// 9.2.16 PartitionPattern ( pattern ), https://tc39.es/ecma402/#sec-partitionpattern
+// 9.2.17 PartitionPattern ( pattern ), https://tc39.es/ecma402/#sec-partitionpattern
 Vector<PatternPartition> partition_pattern(StringView pattern)
 {
     // 1. Let result be a new empty List.
@@ -707,7 +699,7 @@ Vector<PatternPartition> partition_pattern(StringView pattern)
             auto literal = pattern.substring_view(next_index, *begin_index - next_index);
 
             // ii. Append a new Record { [[Type]]: "literal", [[Value]]: literal } as the last element of the list result.
-            result.append({ "literal"sv, literal });
+            result.append({ "literal"sv, MUST(String::from_utf8(literal)) });
         }
 
         // d. Let p be the substring of pattern from position beginIndex, exclusive, to position endIndex, exclusive.
@@ -729,7 +721,7 @@ Vector<PatternPartition> partition_pattern(StringView pattern)
         auto literal = pattern.substring_view(next_index);
 
         // b. Append a new Record { [[Type]]: "literal", [[Value]]: literal } as the last element of the list result.
-        result.append({ "literal"sv, literal });
+        result.append({ "literal"sv, MUST(String::from_utf8(literal)) });
     }
 
     // 8. Return result.

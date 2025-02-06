@@ -5,6 +5,7 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/SVGGeometryElementPrototype.h>
 #include <LibWeb/Layout/SVGGeometryBox.h>
 #include <LibWeb/SVG/SVGGeometryElement.h>
 
@@ -13,7 +14,12 @@ namespace Web::SVG {
 SVGGeometryElement::SVGGeometryElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : SVGGraphicsElement(document, move(qualified_name))
 {
-    set_prototype(&Bindings::cached_web_prototype(realm(), "SVGGeometryElement"));
+}
+
+void SVGGeometryElement::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(SVGGeometryElement);
 }
 
 JS::GCPtr<Layout::Node> SVGGeometryElement::create_layout_node(NonnullRefPtr<CSS::StyleProperties> style)

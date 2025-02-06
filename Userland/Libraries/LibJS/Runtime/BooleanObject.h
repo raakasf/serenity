@@ -12,9 +12,10 @@ namespace JS {
 
 class BooleanObject : public Object {
     JS_OBJECT(BooleanObject, Object);
+    JS_DECLARE_ALLOCATOR(BooleanObject);
 
 public:
-    static BooleanObject* create(Realm&, bool);
+    static NonnullGCPtr<BooleanObject> create(Realm&, bool);
 
     virtual ~BooleanObject() override = default;
 

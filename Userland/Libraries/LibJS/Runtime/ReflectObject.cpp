@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,15 +15,17 @@
 
 namespace JS {
 
+JS_DEFINE_ALLOCATOR(ReflectObject);
+
 ReflectObject::ReflectObject(Realm& realm)
-    : Object(*realm.intrinsics().object_prototype())
+    : Object(ConstructWithPrototypeTag::Tag, realm.intrinsics().object_prototype())
 {
 }
 
 void ReflectObject::initialize(Realm& realm)
 {
     auto& vm = this->vm();
-    Object::initialize(realm);
+    Base::initialize(realm);
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(realm, vm.names.apply, apply, 3, attr);
     define_native_function(realm, vm.names.construct, construct, 2, attr);
@@ -40,7 +42,7 @@ void ReflectObject::initialize(Realm& realm)
     define_native_function(realm, vm.names.setPrototypeOf, set_prototype_of, 2, attr);
 
     // 28.1.14 Reflect [ @@toStringTag ], https://tc39.es/ecma262/#sec-reflect-@@tostringtag
-    define_direct_property(*vm.well_known_symbol_to_string_tag(), js_string(vm, vm.names.Reflect.as_string()), Attribute::Configurable);
+    define_direct_property(vm.well_known_symbol_to_string_tag(), PrimitiveString::create(vm, vm.names.Reflect.as_string()), Attribute::Configurable);
 }
 
 // 28.1.1 Reflect.apply ( target, thisArgument, argumentsList ), https://tc39.es/ecma262/#sec-reflect.apply
@@ -59,7 +61,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::apply)
 
     // 3. Perform PrepareForTailCall().
     // 4. Return ? Call(target, thisArgument, args).
-    return TRY(call(vm, target.as_function(), this_argument, move(args)));
+    return TRY(call(vm, target.as_function(), this_argument, args.span()));
 }
 
 // 28.1.2 Reflect.construct ( target, argumentsList [ , newTarget ] ), https://tc39.es/ecma262/#sec-reflect.construct
@@ -84,7 +86,7 @@ JS_DEFINE_NATIVE_FUNCTION(ReflectObject::construct)
     auto args = TRY(create_list_from_array_like(vm, arguments_list));
 
     // 5. Return ? Construct(target, args, newTarget).
-    return TRY(JS::construct(vm, target.as_function(), move(args), &new_target.as_function()));
+    return TRY(JS::construct(vm, target.as_function(), args.span(), &new_target.as_function()));
 }
 
 // 28.1.3 Reflect.defineProperty ( target, propertyKey, attributes ), https://tc39.es/ecma262/#sec-reflect.defineproperty

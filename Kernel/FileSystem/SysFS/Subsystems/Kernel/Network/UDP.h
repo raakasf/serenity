@@ -6,22 +6,24 @@
 
 #pragma once
 
+#include <AK/RefPtr.h>
 #include <AK/Types.h>
 #include <Kernel/FileSystem/SysFS/Subsystems/Kernel/GlobalInformation.h>
-#include <Kernel/KBufferBuilder.h>
-#include <Kernel/Library/LockRefPtr.h>
-#include <Kernel/UserOrKernelBuffer.h>
+#include <Kernel/Library/KBufferBuilder.h>
+#include <Kernel/Library/UserOrKernelBuffer.h>
 
 namespace Kernel {
 
 class SysFSNetworkUDPStats final : public SysFSGlobalInformation {
 public:
     virtual StringView name() const override { return "udp"sv; }
-    static NonnullLockRefPtr<SysFSNetworkUDPStats> must_create(SysFSDirectory const&);
+    static NonnullRefPtr<SysFSNetworkUDPStats> must_create(SysFSDirectory const&);
 
 private:
     explicit SysFSNetworkUDPStats(SysFSDirectory const&);
     virtual ErrorOr<void> try_generate(KBufferBuilder& builder) override;
+
+    virtual bool is_readable_by_jailed_processes() const override { return true; }
 };
 
 }

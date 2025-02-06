@@ -8,16 +8,16 @@
 #include "HardwareScreenBackend.h"
 #include "ScreenBackend.h"
 #include <AK/Try.h>
-#include <Kernel/API/Graphics.h>
 #include <LibCore/System.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <sys/devices/gpu.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
 namespace WindowServer {
 
-HardwareScreenBackend::HardwareScreenBackend(String device)
+HardwareScreenBackend::HardwareScreenBackend(ByteString device)
     : m_device(move(device))
 {
 }
@@ -28,7 +28,7 @@ ErrorOr<void> HardwareScreenBackend::open()
 
     GraphicsConnectorProperties properties;
     if (graphics_connector_get_properties(m_display_connector_fd, &properties) < 0)
-        return Error::from_syscall(String::formatted("failed to ioctl {}", m_device), errno);
+        return Error::from_syscall(ByteString::formatted("failed to ioctl {}", m_device), errno);
 
     m_can_device_flush_buffers = (properties.partial_flushing_support != 0);
     m_can_device_flush_entire_framebuffer = (properties.flushing_support != 0);
@@ -152,7 +152,7 @@ void HardwareScreenBackend::set_head_buffer(int head_index)
     VERIFY(rc == 0);
 }
 
-ErrorOr<void> HardwareScreenBackend::flush_framebuffer_rects(int buffer_index, Span<FBRect const> flush_rects)
+ErrorOr<void> HardwareScreenBackend::flush_framebuffer_rects(int buffer_index, ReadonlySpan<FBRect> flush_rects)
 {
     int rc = fb_flush_buffers(m_display_connector_fd, buffer_index, flush_rects.data(), (unsigned)flush_rects.size());
     if (rc == -ENOTSUP)

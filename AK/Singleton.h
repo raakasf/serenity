@@ -11,7 +11,7 @@
 #include <AK/Noncopyable.h>
 #ifdef KERNEL
 #    include <Kernel/Arch/Processor.h>
-#    include <Kernel/Arch/ScopedCritical.h>
+#    include <Kernel/Library/ScopedCritical.h>
 #    include <Kernel/Locking/SpinlockProtected.h>
 #elif defined(AK_OS_WINDOWS)
 // Forward declare to avoid pulling Windows.h into every file in existence.
@@ -39,12 +39,11 @@ struct SingletonInstanceCreator {
 
 #ifdef KERNEL
 
-// FIXME: Find a nice way of injecting the lock rank into the singleton.
-template<typename T>
-struct SingletonInstanceCreator<Kernel::SpinlockProtected<T>> {
-    static Kernel::SpinlockProtected<T>* create()
+template<typename T, Kernel::LockRank Rank>
+struct SingletonInstanceCreator<Kernel::SpinlockProtected<T, Rank>> {
+    static Kernel::SpinlockProtected<T, Rank>* create()
     {
-        return new Kernel::SpinlockProtected<T> { Kernel::LockRank::None };
+        return new Kernel::SpinlockProtected<T, Rank> {};
     }
 };
 #endif
@@ -134,4 +133,6 @@ private:
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::Singleton;
+#endif

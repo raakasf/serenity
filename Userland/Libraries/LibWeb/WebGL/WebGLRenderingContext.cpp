@@ -5,12 +5,16 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/WebGLRenderingContextPrototype.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/WebGL/EventNames.h>
 #include <LibWeb/WebGL/WebGLContextEvent.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 
 namespace Web::WebGL {
+
+JS_DEFINE_ALLOCATOR(WebGLRenderingContext);
 
 // https://www.khronos.org/registry/webgl/specs/latest/1.0/#fire-a-webgl-context-event
 static void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type)
@@ -27,7 +31,7 @@ static void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, Fl
 static void fire_webgl_context_creation_error(HTML::HTMLCanvasElement& canvas_element)
 {
     // 1. Fire a WebGL context event named "webglcontextcreationerror" at canvas, optionally with its statusMessage attribute set to a platform dependent string about the nature of the failure.
-    fire_webgl_context_event(canvas_element, "webglcontextcreationerror"sv);
+    fire_webgl_context_event(canvas_element, EventNames::webglcontextcreationerror);
 }
 
 JS::ThrowCompletionOr<JS::GCPtr<WebGLRenderingContext>> WebGLRenderingContext::create(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, JS::Value options)
@@ -41,20 +45,28 @@ JS::ThrowCompletionOr<JS::GCPtr<WebGLRenderingContext>> WebGLRenderingContext::c
         return JS::GCPtr<WebGLRenderingContext> { nullptr };
     }
 
-    auto context_or_error = GL::create_context(*canvas_element.bitmap());
-    if (context_or_error.is_error()) {
+    VERIFY(canvas_element.bitmap());
+    auto context = OpenGLContext::create(*canvas_element.bitmap());
+
+    if (!context) {
         fire_webgl_context_creation_error(canvas_element);
         return JS::GCPtr<WebGLRenderingContext> { nullptr };
     }
-    return realm.heap().allocate<WebGLRenderingContext>(realm, realm, canvas_element, context_or_error.release_value(), context_attributes, context_attributes);
+
+    return realm.heap().allocate<WebGLRenderingContext>(realm, realm, canvas_element, context.release_nonnull(), context_attributes, context_attributes);
 }
 
-WebGLRenderingContext::WebGLRenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<GL::GLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
+WebGLRenderingContext::WebGLRenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
     : WebGLRenderingContextBase(realm, canvas_element, move(context), move(context_creation_parameters), move(actual_context_parameters))
 {
-    set_prototype(&Bindings::cached_web_prototype(realm, "WebGLRenderingContext"));
 }
 
 WebGLRenderingContext::~WebGLRenderingContext() = default;
+
+void WebGLRenderingContext::initialize(JS::Realm& realm)
+{
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(WebGLRenderingContext);
+}
 
 }

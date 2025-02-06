@@ -9,7 +9,6 @@
 #include <AK/Debug.h>
 #include <AK/Format.h>
 #include <AK/SinglyLinkedList.h>
-#include <AK/StdLibExtras.h>
 #include <Kernel/API/Syscall.h>
 #include <LibSystem/syscall.h>
 #include <bits/pthread_cancel.h>
@@ -23,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -34,7 +34,6 @@ using PthreadAttrImpl = Syscall::SC_create_thread_params;
 
 static constexpr size_t required_stack_alignment = 4 * MiB;
 static constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
-static constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
 
 __thread void* s_stack_location;
 __thread size_t s_stack_size;
@@ -54,11 +53,15 @@ static thread_local SinglyLinkedList<CleanupHandler> cleanup_handlers;
 
 static __thread bool pending_cancellation = false;
 
+[[gnu::weak]] extern ErrorOr<FlatPtr> __create_new_tls_region() asm("__create_new_tls_region");
+[[gnu::weak]] extern ErrorOr<void> __free_tls_region(FlatPtr thread_pointer) asm("__free_tls_region");
+
 extern "C" {
 
 [[noreturn]] static void exit_thread(void* code, void* stack_location, size_t stack_size)
 {
     __pthread_key_destroy_for_current_thread();
+    MUST(__free_tls_region(bit_cast<FlatPtr>(__builtin_thread_pointer())));
     syscall(SC_exit_thread, code, stack_location, stack_size);
     VERIFY_NOT_REACHED();
 }
@@ -92,31 +95,28 @@ static int create_thread(pthread_t* thread, void* (*entry)(void*), void* argumen
     while (((uintptr_t)stack - 16) % 16 != 0)
         push_on_stack(nullptr);
 
-#if ARCH(I386)
-    push_on_stack((void*)(uintptr_t)thread_params->stack_size);
-    push_on_stack(thread_params->stack_location);
-    push_on_stack(argument);
-    push_on_stack((void*)entry);
-#elif ARCH(X86_64)
-    thread_params->rdi = (FlatPtr)entry;
-    thread_params->rsi = (FlatPtr)argument;
-    thread_params->rdx = (FlatPtr)thread_params->stack_location;
-    thread_params->rcx = thread_params->stack_size;
-#elif ARCH(AARCH64)
-    (void)entry;
-    (void)argument;
-    TODO_AARCH64();
-#else
-#    error Unknown architecture
-#endif
+    thread_params->entry = entry;
+    thread_params->entry_argument = argument;
+
+    auto maybe_thread_pointer = __create_new_tls_region();
+    if (maybe_thread_pointer.is_error())
+        return maybe_thread_pointer.error().code();
+
+    thread_params->tls_pointer = bit_cast<void*>(maybe_thread_pointer.release_value());
+
     VERIFY((uintptr_t)stack % 16 == 0);
 
+#if ARCH(X86_64)
     // Push a fake return address
     push_on_stack(nullptr);
+#endif
 
     int rc = syscall(SC_create_thread, pthread_create_helper, thread_params);
     if (rc >= 0)
         *thread = rc;
+    else
+        MUST(__free_tls_region(bit_cast<FlatPtr>(thread_params->tls_pointer)));
+
     __RETURN_PTHREAD_ERROR(rc);
 }
 
@@ -163,6 +163,7 @@ void pthread_exit(void* value_ptr)
     pthread_exit_without_cleanup_handlers(value_ptr);
 }
 
+#ifndef _DYNAMIC_LOADER
 void __pthread_maybe_cancel()
 {
     // Check if we have cancellations enabled.
@@ -177,6 +178,7 @@ void __pthread_maybe_cancel()
     // return value and calling the cleanup handlers for us.
     pthread_exit(PTHREAD_CANCELED);
 }
+#endif
 
 // https://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_cleanup_push.html
 void pthread_cleanup_push(void (*routine)(void*), void* arg)
@@ -467,7 +469,7 @@ int pthread_attr_setstacksize(pthread_attr_t* attributes, size_t stack_size)
     if (!attributes_impl)
         return EINVAL;
 
-    if ((stack_size < PTHREAD_STACK_MIN) || stack_size > highest_reasonable_stack_size)
+    if (stack_size < PTHREAD_STACK_MIN || stack_size > PTHREAD_STACK_MAX)
         return EINVAL;
 
     attributes_impl->stack_size = stack_size;
@@ -496,15 +498,30 @@ int pthread_attr_setscope([[maybe_unused]] pthread_attr_t* attributes, [[maybe_u
 }
 
 // https://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_getschedparam.html
-int pthread_getschedparam([[maybe_unused]] pthread_t thread, [[maybe_unused]] int* policy, [[maybe_unused]] struct sched_param* param)
+int pthread_getschedparam(pthread_t thread, [[maybe_unused]] int* policy, struct sched_param* param)
 {
-    return 0;
+    Syscall::SC_scheduler_parameters_params parameters {
+        .pid_or_tid = thread,
+        .mode = Syscall::SchedulerParametersMode::Thread,
+        .parameters = *param,
+    };
+    int rc = syscall(Syscall::SC_scheduler_get_parameters, &parameters);
+    if (rc == 0)
+        *param = parameters.parameters;
+
+    __RETURN_PTHREAD_ERROR(rc);
 }
 
 // https://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_setschedparam.html
-int pthread_setschedparam([[maybe_unused]] pthread_t thread, [[maybe_unused]] int policy, [[maybe_unused]] const struct sched_param* param)
+int pthread_setschedparam(pthread_t thread, [[maybe_unused]] int policy, struct sched_param const* param)
 {
-    return 0;
+    Syscall::SC_scheduler_parameters_params parameters {
+        .pid_or_tid = thread,
+        .mode = Syscall::SchedulerParametersMode::Thread,
+        .parameters = *param,
+    };
+    int rc = syscall(Syscall::SC_scheduler_set_parameters, &parameters);
+    __RETURN_PTHREAD_ERROR(rc);
 }
 
 static void pthread_cancel_signal_handler(int signal)
@@ -538,17 +555,23 @@ int pthread_cancel(pthread_t thread)
     return pthread_kill(thread, SIGCANCEL);
 }
 
+// https://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_testcancel.html
+void pthread_testcancel(void)
+{
+    __pthread_maybe_cancel();
+}
+
 int pthread_setname_np(pthread_t thread, char const* name)
 {
     if (!name)
         return EFAULT;
-    int rc = syscall(SC_set_thread_name, thread, name, strlen(name));
+    int rc = prctl(PR_SET_THREAD_NAME, thread, name, strlen(name));
     __RETURN_PTHREAD_ERROR(rc);
 }
 
 int pthread_getname_np(pthread_t thread, char* buffer, size_t buffer_size)
 {
-    int rc = syscall(SC_get_thread_name, thread, buffer, buffer_size);
+    int rc = prctl(PR_GET_THREAD_NAME, thread, buffer, buffer_size);
     __RETURN_PTHREAD_ERROR(rc);
 }
 
@@ -847,7 +870,7 @@ int pthread_rwlock_unlock(pthread_rwlock_t* lockval_p)
         auto desired = current & ~(writer_locked_mask | writer_intent_mask);
         AK::atomic_store(lockp, desired, AK::MemoryOrder::memory_order_release);
         // Then wake both readers and writers, if any.
-        auto rc = futex(lockp, FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG, current, nullptr, nullptr, (current & writer_wake_mask) | reader_wake_mask);
+        auto rc = futex(lockp, FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG, UINT32_MAX, nullptr, nullptr, (current & writer_wake_mask) | reader_wake_mask);
         if (rc < 0)
             return errno;
         return 0;

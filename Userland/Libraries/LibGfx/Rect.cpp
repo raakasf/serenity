@@ -4,8 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/StdLibExtras.h>
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Vector.h>
 #include <LibGfx/Line.h>
 #include <LibGfx/Rect.h>
@@ -15,35 +14,35 @@
 namespace Gfx {
 
 template<>
-String IntRect::to_string() const
+ByteString IntRect::to_byte_string() const
 {
-    return String::formatted("[{},{} {}x{}]", x(), y(), width(), height());
+    return ByteString::formatted("[{},{} {}x{}]", x(), y(), width(), height());
 }
 
 template<>
-String FloatRect::to_string() const
+ByteString FloatRect::to_byte_string() const
 {
-    return String::formatted("[{},{} {}x{}]", x(), y(), width(), height());
+    return ByteString::formatted("[{},{} {}x{}]", x(), y(), width(), height());
 }
 
 }
 
 namespace IPC {
 
-bool encode(Encoder& encoder, Gfx::IntRect const& rect)
+template<>
+ErrorOr<void> encode(Encoder& encoder, Gfx::IntRect const& rect)
 {
-    encoder << rect.location() << rect.size();
-    return true;
+    TRY(encoder.encode(rect.location()));
+    TRY(encoder.encode(rect.size()));
+    return {};
 }
 
-ErrorOr<void> decode(Decoder& decoder, Gfx::IntRect& rect)
+template<>
+ErrorOr<Gfx::IntRect> decode(Decoder& decoder)
 {
-    Gfx::IntPoint point;
-    Gfx::IntSize size;
-    TRY(decoder.decode(point));
-    TRY(decoder.decode(size));
-    rect = { point, size };
-    return {};
+    auto point = TRY(decoder.decode<Gfx::IntPoint>());
+    auto size = TRY(decoder.decode<Gfx::IntSize>());
+    return Gfx::IntRect { point, size };
 }
 
 }

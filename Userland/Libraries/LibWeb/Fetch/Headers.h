@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2022-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +10,8 @@
 #include <AK/String.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
+#include <LibJS/Forward.h>
+#include <LibJS/Heap/GCPtr.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Headers.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
@@ -21,6 +23,7 @@ using HeadersInit = Variant<Vector<Vector<String>>, OrderedHashMap<String, Strin
 // https://fetch.spec.whatwg.org/#headers-class
 class Headers final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(Headers, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(Headers);
 
 public:
     enum class Guard {
@@ -35,20 +38,20 @@ public:
 
     virtual ~Headers() override;
 
-    [[nodiscard]] NonnullRefPtr<Infrastructure::HeaderList>& header_list() { return m_header_list; }
-    [[nodiscard]] NonnullRefPtr<Infrastructure::HeaderList> const& header_list() const { return m_header_list; }
-    void set_header_list(NonnullRefPtr<Infrastructure::HeaderList> header_list) { m_header_list = move(header_list); }
+    [[nodiscard]] JS::NonnullGCPtr<Infrastructure::HeaderList> header_list() const { return m_header_list; }
+    void set_header_list(JS::NonnullGCPtr<Infrastructure::HeaderList> header_list) { m_header_list = header_list; }
 
     [[nodiscard]] Guard guard() const { return m_guard; }
     void set_guard(Guard guard) { m_guard = guard; }
 
     WebIDL::ExceptionOr<void> fill(HeadersInit const&);
+    WebIDL::ExceptionOr<void> append(Infrastructure::Header);
 
     // JS API functions
-    WebIDL::ExceptionOr<void> append(Infrastructure::Header);
     WebIDL::ExceptionOr<void> append(String const& name, String const& value);
     WebIDL::ExceptionOr<void> delete_(String const& name);
-    WebIDL::ExceptionOr<String> get(String const& name);
+    WebIDL::ExceptionOr<Optional<String>> get(String const& name);
+    [[nodiscard]] Vector<String> get_set_cookie();
     WebIDL::ExceptionOr<bool> has(String const& name);
     WebIDL::ExceptionOr<void> set(String const& name, String const& value);
 
@@ -58,13 +61,17 @@ public:
 private:
     friend class HeadersIterator;
 
-    explicit Headers(JS::Realm&);
+    Headers(JS::Realm&, JS::NonnullGCPtr<Infrastructure::HeaderList>);
 
-    void remove_privileged_no_cors_headers();
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(JS::Cell::Visitor&) override;
+
+    WebIDL::ExceptionOr<bool> validate(Infrastructure::Header const&) const;
+    void remove_privileged_no_cors_request_headers();
 
     // https://fetch.spec.whatwg.org/#concept-headers-header-list
     // A Headers object has an associated header list (a header list), which is initially empty.
-    NonnullRefPtr<Infrastructure::HeaderList> m_header_list;
+    JS::NonnullGCPtr<Infrastructure::HeaderList> m_header_list;
 
     // https://fetch.spec.whatwg.org/#concept-headers-guard
     // A Headers object also has an associated guard, which is a headers guard. A headers guard is "immutable", "request", "request-no-cors", "response" or "none".

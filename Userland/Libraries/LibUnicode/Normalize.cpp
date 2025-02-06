@@ -10,12 +10,17 @@
 #include <AK/Vector.h>
 #include <LibUnicode/CharacterTypes.h>
 #include <LibUnicode/Normalize.h>
-#include <LibUnicode/UnicodeData.h>
+
+#if ENABLE_UNICODE_DATA
+#    include <LibUnicode/UnicodeData.h>
+#else
+struct Unicode::CodePointDecomposition { };
+#endif
 
 namespace Unicode {
 
-Optional<CodePointDecomposition const&> __attribute__((weak)) code_point_decomposition(u32) { return {}; }
-Span<CodePointDecomposition const> __attribute__((weak)) code_point_decompositions() { return {}; }
+Optional<CodePointDecomposition const> __attribute__((weak)) code_point_decomposition(u32) { return {}; }
+Optional<u32> __attribute__((weak)) code_point_composition(u32, u32) { return {}; }
 
 NormalizationForm normalization_form_from_string(StringView form)
 {
@@ -118,17 +123,14 @@ static u32 combine_hangul_code_points(u32 a, u32 b)
     return 0;
 }
 
-static u32 combine_code_points(u32 a, u32 b)
+static u32 combine_code_points([[maybe_unused]] u32 a, [[maybe_unused]] u32 b)
 {
-    Array<u32, 2> const points { a, b };
-    // FIXME: Do something better than linear search to find reverse mappings.
-    for (auto const& mapping : Unicode::code_point_decompositions()) {
-        if (mapping.tag == CompatibilityFormattingTag::Canonical && mapping.decomposition == points) {
-            if (code_point_has_property(mapping.code_point, Property::Full_Composition_Exclusion))
-                continue;
-            return mapping.code_point;
-        }
-    }
+#if ENABLE_UNICODE_DATA
+    auto composition = code_point_composition(a, b);
+    if (composition.has_value())
+        return composition.value();
+#endif
+
     return 0;
 }
 
@@ -137,12 +139,12 @@ enum class UseCompatibility {
     No
 };
 
-static void decompose_code_point(u32 code_point, Vector<u32>& code_points_output, UseCompatibility use_compatibility)
+static void decompose_code_point(u32 code_point, Vector<u32>& code_points_output, [[maybe_unused]] UseCompatibility use_compatibility)
 {
-    if (is_hangul_code_point(code_point)) {
-        decompose_hangul_code_point(code_point, code_points_output);
-        return;
-    }
+    if (is_hangul_code_point(code_point))
+        return decompose_hangul_code_point(code_point, code_points_output);
+
+#if ENABLE_UNICODE_DATA
     auto const mapping = Unicode::code_point_decomposition(code_point);
     if (mapping.has_value() && (mapping->tag == CompatibilityFormattingTag::Canonical || use_compatibility == UseCompatibility::Yes)) {
         for (auto code_point : mapping->decomposition) {
@@ -151,6 +153,7 @@ static void decompose_code_point(u32 code_point, Vector<u32>& code_points_output
     } else {
         code_points_output.append(code_point);
     }
+#endif
 }
 
 // This can be any sorting algorithm that maintains order (like std::stable_sort),
@@ -194,11 +197,11 @@ static void canonical_ordering_algorithm(Span<u32> code_points)
 // See Section 3.11, D115 of Version 15.0.0 of the Unicode Standard.
 static bool is_blocked(Span<u32> code_points, size_t a, size_t c)
 {
-    if (!is_starter(code_points[a]) || a == c - 1)
+    if (a == c - 1)
         return false;
     auto const c_combining_class = Unicode::canonical_combining_class(code_points[c]);
     auto const b_combining_class = Unicode::canonical_combining_class(code_points[c - 1]);
-    return b_combining_class == 0 || b_combining_class >= c_combining_class;
+    return b_combining_class >= c_combining_class;
 }
 
 // The Canonical Composition Algorithm, as specified in Version 15.0.0 of the Unicode Standard.
@@ -206,50 +209,56 @@ static bool is_blocked(Span<u32> code_points, size_t a, size_t c)
 // https://www.unicode.org/versions/Unicode15.0.0/ch03.pdf#G50628
 static void canonical_composition_algorithm(Vector<u32>& code_points)
 {
+    if (code_points.size() <= 1)
+        return;
+    ssize_t last_starter = is_starter(code_points[0]) ? 0 : -1;
     for (size_t i = 1; i < code_points.size(); ++i) {
         auto const current_character = code_points[i];
         // R1. Seek back (left) to find the last Starter L preceding C in the character sequence
-        for (ssize_t j = i - 1; j >= 0; --j) {
-            if (!is_starter(code_points[j]))
-                continue;
-            // R2. If there is such an L, and C is not blocked from L,
-            //     and there exists a Primary Composite P which is canonically equivalent to <L, C>,
-            //     then replace L by P in the sequence and delete C from the sequence.
-            if (is_blocked(code_points.span(), j, i))
-                continue;
-
-            auto composite = combine_hangul_code_points(code_points[j], current_character);
-
-            if (composite == 0)
-                composite = combine_code_points(code_points[j], current_character);
-
-            if (composite != 0) {
-                code_points[j] = composite;
-                code_points.remove(i);
-                --i;
-                break;
-            }
+        if (last_starter == -1) {
+            if (is_starter(current_character))
+                last_starter = i;
+            continue;
         }
+        // R2. If there is such an L, and C is not blocked from L,
+        //     and there exists a Primary Composite P which is canonically equivalent to <L, C>,
+        //     then replace L by P in the sequence and delete C from the sequence.
+        if (is_blocked(code_points.span(), last_starter, i)) {
+            if (is_starter(current_character))
+                last_starter = i;
+            continue;
+        }
+
+        auto composite = combine_hangul_code_points(code_points[last_starter], current_character);
+
+        if (composite == 0)
+            composite = combine_code_points(code_points[last_starter], current_character);
+
+        if (composite == 0) {
+            if (is_starter(current_character))
+                last_starter = i;
+            continue;
+        }
+
+        code_points[last_starter] = composite;
+        code_points.remove(i);
+        --i;
     }
 }
 
 static Vector<u32> normalize_nfd(Utf8View string)
 {
     Vector<u32> result;
-
-    for (auto const code_point : string) {
+    for (auto const code_point : string)
         decompose_code_point(code_point, result, UseCompatibility::No);
-    }
 
     canonical_ordering_algorithm(result);
-
     return result;
 }
 
 static Vector<u32> normalize_nfc(Utf8View string)
 {
     auto result = normalize_nfd(string);
-
     canonical_composition_algorithm(result);
 
     return result;
@@ -258,20 +267,16 @@ static Vector<u32> normalize_nfc(Utf8View string)
 static Vector<u32> normalize_nfkd(Utf8View string)
 {
     Vector<u32> result;
-
-    for (auto const code_point : string) {
+    for (auto const code_point : string)
         decompose_code_point(code_point, result, UseCompatibility::Yes);
-    }
 
     canonical_ordering_algorithm(result);
-
     return result;
 }
 
 static Vector<u32> normalize_nfkc(Utf8View string)
 {
     auto result = normalize_nfkd(string);
-
     canonical_composition_algorithm(result);
 
     return result;
@@ -294,16 +299,13 @@ static Vector<u32> normalize_implementation(Utf8View string, NormalizationForm f
 
 String normalize(StringView string, NormalizationForm form)
 {
-    Utf8View const view { string };
-
-    auto const code_points = normalize_implementation(view, form);
+    auto const code_points = normalize_implementation(Utf8View { string }, form);
 
     StringBuilder builder;
-    for (auto code_point : code_points) {
+    for (auto code_point : code_points)
         builder.append_code_point(code_point);
-    }
 
-    return builder.to_string();
+    return MUST(builder.to_string());
 }
 
 }

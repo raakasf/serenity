@@ -31,6 +31,8 @@ static constexpr u32 POST_WAKES = 1 << 31;
 
 static constexpr auto sem_path_prefix = "/tmp/semaphore/"sv;
 static constexpr auto SEM_NAME_MAX = PATH_MAX - sem_path_prefix.length();
+
+// The returned string will always contain a null terminator, since it is used in C APIs.
 static ErrorOr<String> sem_name_to_path(char const* name)
 {
     if (name[0] != '/')
@@ -48,7 +50,9 @@ static ErrorOr<String> sem_name_to_path(char const* name)
     StringBuilder builder;
     TRY(builder.try_append(sem_path_prefix));
     TRY(builder.try_append(name_view));
-    return builder.build();
+
+    TRY(builder.try_append_code_point(0));
+    return builder.to_string();
 }
 
 struct NamedSemaphore {
@@ -95,7 +99,8 @@ sem_t* sem_open(char const* name, int flags, ...)
     pthread_mutex_lock(&s_sem_mutex);
     ScopeGuard unlock_guard = [] { pthread_mutex_unlock(&s_sem_mutex); };
 
-    int fd = open(path.characters(), O_RDWR | O_CLOEXEC | flags, mode);
+    // sem_name_to_path guarantees a null terminator.
+    int fd = open(path.bytes_as_string_view().characters_without_null_termination(), O_RDWR | O_CLOEXEC | flags, mode);
     if (fd == -1)
         return SEM_FAILED;
 
@@ -200,7 +205,7 @@ int sem_unlink(char const* name)
     }
     auto path = path_or_error.release_value();
 
-    return unlink(path.characters());
+    return unlink(path.bytes_as_string_view().characters_without_null_termination());
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sem_init.html

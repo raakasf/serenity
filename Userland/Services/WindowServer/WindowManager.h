@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,6 +33,8 @@ namespace WindowServer {
 int const double_click_speed_max = 900;
 int const double_click_speed_min = 100;
 
+extern RefPtr<Core::ConfigFile> g_config;
+
 class Screen;
 class MouseEvent;
 class Window;
@@ -41,8 +43,9 @@ class WindowSwitcher;
 class Button;
 class DndOverlay;
 class WindowGeometryOverlay;
+class TileWindowOverlay;
 
-class WindowManager : public Core::Object {
+class WindowManager : public Core::EventReceiver {
     C_OBJECT(WindowManager)
 
     friend class Compositor;
@@ -76,14 +79,13 @@ public:
     void notify_occlusion_state_changed(Window&);
     void notify_progress_changed(Window&);
     void notify_modified_changed(Window&);
-    void notify_input_preempted(Window&, InputPreemptor = InputPreemptor::Other);
 
-    Gfx::IntRect tiled_window_rect(Window const&, WindowTileType tile_type = WindowTileType::Maximized, bool relative_to_window_screen = false) const;
+    Gfx::IntRect tiled_window_rect(Window const&, Optional<Screen const&> = {}, WindowTileType tile_type = WindowTileType::Maximized) const;
 
     ConnectionFromClient const* dnd_client() const { return m_dnd_client.ptr(); }
     Core::MimeData const& dnd_mime_data() const { return *m_dnd_mime_data; }
 
-    void start_dnd_drag(ConnectionFromClient&, String const& text, Gfx::Bitmap const*, Core::MimeData const&);
+    void start_dnd_drag(ConnectionFromClient&, ByteString const& text, Gfx::Bitmap const*, Core::MimeData const&);
     void end_dnd_drag();
 
     void set_accepts_drag(bool);
@@ -99,16 +101,8 @@ public:
         return m_current_window_stack->active_window();
     }
 
-    Window* active_input_window()
-    {
-        VERIFY(m_current_window_stack);
-        return m_current_window_stack->active_input_window();
-    }
-    Window const* active_input_window() const
-    {
-        VERIFY(m_current_window_stack);
-        return m_current_window_stack->active_input_window();
-    }
+    Window* foremost_popup_window(WindowStack& stack = WindowManager::the().current_window_stack());
+    void request_close_fragile_windows(WindowStack& stack = WindowManager::the().current_window_stack());
 
     ConnectionFromClient const* active_client() const;
 
@@ -122,7 +116,7 @@ public:
 
     void move_to_front_and_make_active(Window&);
 
-    Gfx::IntRect desktop_rect(Screen&) const;
+    Gfx::IntRect desktop_rect(Screen const&) const;
     Gfx::IntRect arena_rect_for_type(Screen&, WindowType) const;
 
     Cursor const& active_cursor() const;
@@ -152,20 +146,20 @@ public:
     Gfx::Font const& font() const;
     Gfx::Font const& window_title_font() const;
 
-    bool set_screen_layout(ScreenLayout&&, bool, String&);
+    bool set_screen_layout(ScreenLayout&&, bool, ByteString&);
     ScreenLayout get_screen_layout() const;
-    bool save_screen_layout(String&);
+    bool save_screen_layout(ByteString&);
 
     void set_acceleration_factor(double);
     void set_scroll_step_size(unsigned);
     void set_double_click_speed(int);
     int double_click_speed() const;
-    void set_buttons_switched(bool);
-    bool get_buttons_switched() const;
+    void set_mouse_buttons_switched(bool);
+    bool are_mouse_buttons_switched() const;
+    void set_natural_scroll(bool);
+    bool is_natural_scroll() const;
 
-    Window* set_active_input_window(Window*);
-    void restore_active_input_window(Window*);
-    void set_active_window(Window*, bool make_input = true);
+    void set_active_window(Window*);
     void set_hovered_button(Button*);
 
     Button const* cursor_tracking_button() const { return m_cursor_tracking_button.ptr(); }
@@ -180,28 +174,26 @@ public:
     void tell_wms_window_icon_changed(Window&);
     void tell_wms_window_rect_changed(Window&);
     void tell_wms_screen_rects_changed();
-    void tell_wms_applet_area_size_changed(Gfx::IntSize const&);
+    void tell_wms_applet_area_size_changed(Gfx::IntSize);
     void tell_wms_super_key_pressed();
     void tell_wms_super_space_key_pressed();
     void tell_wms_super_d_key_pressed();
     void tell_wms_super_digit_key_pressed(u8);
     void tell_wms_current_window_stack_changed();
 
-    bool is_active_window_or_capturing_modal(Window&) const;
-
     void check_hide_geometry_overlay(Window&);
 
-    void start_window_resize(Window&, Gfx::IntPoint const&, MouseButton, ResizeDirection);
+    void start_window_resize(Window&, Gfx::IntPoint, MouseButton, ResizeDirection);
     void start_window_resize(Window&, MouseEvent const&, ResizeDirection);
     void start_window_move(Window&, MouseEvent const&);
-    void start_window_move(Window&, Gfx::IntPoint const&);
+    void start_window_move(Window&, Gfx::IntPoint);
 
     Window const* active_fullscreen_window() const
     {
         if (active_window() && active_window()->is_fullscreen())
             return active_window();
         return nullptr;
-    };
+    }
 
     Window* active_fullscreen_window()
     {
@@ -210,20 +202,21 @@ public:
         return nullptr;
     }
 
-    bool update_theme(String theme_path, String theme_name, bool keep_desktop_background);
+    bool update_theme(ByteString theme_path, ByteString theme_name, bool keep_desktop_background, Optional<ByteString> const& color_scheme_path);
     void invalidate_after_theme_or_font_change();
 
     bool set_theme_override(Core::AnonymousBuffer const& theme_override);
     Optional<Core::AnonymousBuffer> get_theme_override() const;
     void clear_theme_override();
     bool is_theme_overridden() { return m_theme_overridden; }
+    Optional<ByteString> get_preferred_color_scheme() { return m_preferred_color_scheme; }
 
     bool set_hovered_window(Window*);
-    void deliver_mouse_event(Window&, MouseEvent const&, bool process_double_click);
+    void deliver_mouse_event(Window&, MouseEvent const&);
 
     void did_popup_a_menu(Badge<Menu>);
 
-    void start_menu_doubleclick(Window& window, MouseEvent const& event);
+    void system_menu_doubleclick(Window& window, MouseEvent const& event);
     bool is_menu_doubleclick(Window& window, MouseEvent const& event) const;
 
     void minimize_windows(Window&, bool);
@@ -257,7 +250,7 @@ public:
     }
     bool is_window_in_modal_chain(Window& chain_window, Window& other_window);
 
-    Gfx::IntPoint get_recommended_window_position(Gfx::IntPoint const& desired);
+    Gfx::IntPoint get_recommended_window_position(Gfx::IntPoint desired);
 
     void reload_icon_bitmaps_after_scale_change();
 
@@ -268,11 +261,11 @@ public:
     void switch_to_window_stack(u32 row, u32 col, Window* carry = nullptr, bool show_overlay = true)
     {
         if (row < window_stack_rows() && col < window_stack_columns())
-            switch_to_window_stack(m_window_stacks[row][col], carry, show_overlay);
+            switch_to_window_stack(*(*m_window_stacks[row])[col], carry, show_overlay);
     }
 
     size_t window_stack_rows() const { return m_window_stacks.size(); }
-    size_t window_stack_columns() const { return m_window_stacks[0].size(); }
+    size_t window_stack_columns() const { return m_window_stacks[0]->size(); }
 
     bool apply_workspace_settings(unsigned rows, unsigned columns, bool save);
 
@@ -286,8 +279,8 @@ public:
     IterationDecision for_each_window_stack(F f)
     {
         for (auto& row : m_window_stacks) {
-            for (auto& stack : row) {
-                IterationDecision decision = f(stack);
+            for (auto& stack : *row) {
+                IterationDecision decision = f(*stack);
                 if (decision != IterationDecision::Continue)
                     return decision;
             }
@@ -301,11 +294,21 @@ public:
     {
         switch (window_type) {
         case WindowType::Normal:
-        case WindowType::Tooltip:
-        case WindowType::Popup:
             return false;
         default:
             return true;
+        }
+    }
+
+    static constexpr bool is_fragile_window_type(WindowType window_type)
+    {
+        switch (window_type) {
+        case WindowType::Autocomplete:
+        case WindowType::Popup:
+        case WindowType::Tooltip:
+            return true;
+        default:
+            return false;
         }
     }
 
@@ -318,15 +321,15 @@ public:
 
     MultiScaleBitmaps const* overlay_rect_shadow() const { return m_overlay_rect_shadow.ptr(); }
 
-    void apply_cursor_theme(String const& name);
+    void apply_cursor_theme(ByteString const& name);
 
     void set_cursor_highlight_radius(int radius);
-    void set_cursor_highlight_color(Gfx::Color const& color);
+    void set_cursor_highlight_color(Gfx::Color color);
 
     bool is_cursor_highlight_enabled() const { return m_cursor_highlight_radius > 0 && m_cursor_highlight_enabled; }
 
     void load_system_effects();
-    void apply_system_effects(Vector<bool>, ShowGeometry);
+    void apply_system_effects(Vector<bool>, ShowGeometry, TileWindow);
     SystemEffects& system_effects() { return m_system_effects; }
 
     RefPtr<KeymapSwitcher> keymap_switcher() { return m_keymap_switcher; }
@@ -337,13 +340,19 @@ public:
 
     u8 last_processed_buttons() { return m_last_processed_buttons; }
 
+    TileWindowOverlay* get_tile_window_overlay(Window&) const;
+    void start_tile_window_animation(Gfx::IntRect const&);
+    void stop_tile_window_animation();
+
+    void on_add_to_quick_launch(pid_t);
+
 private:
-    explicit WindowManager(Gfx::PaletteImpl const&);
+    explicit WindowManager(Gfx::PaletteImpl&);
 
     void notify_new_active_window(Window&);
-    void notify_new_active_input_window(Window&);
     void notify_previous_active_window(Window&);
-    void notify_previous_active_input_window(Window&);
+    void notify_active_window_input_preempted();
+    void notify_active_window_input_restored();
 
     void process_mouse_event(MouseEvent&);
     void process_event_for_doubleclick(Window& window, MouseEvent& event);
@@ -370,25 +379,25 @@ private:
 
     [[nodiscard]] static WindowStack& get_rendering_window_stacks(WindowStack*&);
 
-    RefPtr<Cursor> m_hidden_cursor;
-    RefPtr<Cursor> m_arrow_cursor;
-    RefPtr<Cursor> m_hand_cursor;
-    RefPtr<Cursor> m_help_cursor;
-    RefPtr<Cursor> m_resize_horizontally_cursor;
-    RefPtr<Cursor> m_resize_vertically_cursor;
-    RefPtr<Cursor> m_resize_diagonally_tlbr_cursor;
-    RefPtr<Cursor> m_resize_diagonally_bltr_cursor;
-    RefPtr<Cursor> m_resize_column_cursor;
-    RefPtr<Cursor> m_resize_row_cursor;
-    RefPtr<Cursor> m_i_beam_cursor;
-    RefPtr<Cursor> m_disallowed_cursor;
-    RefPtr<Cursor> m_move_cursor;
-    RefPtr<Cursor> m_drag_cursor;
-    RefPtr<Cursor> m_drag_copy_cursor;
-    RefPtr<Cursor> m_wait_cursor;
-    RefPtr<Cursor> m_crosshair_cursor;
-    RefPtr<Cursor> m_eyedropper_cursor;
-    RefPtr<Cursor> m_zoom_cursor;
+    RefPtr<Cursor const> m_hidden_cursor;
+    RefPtr<Cursor const> m_arrow_cursor;
+    RefPtr<Cursor const> m_hand_cursor;
+    RefPtr<Cursor const> m_help_cursor;
+    RefPtr<Cursor const> m_resize_horizontally_cursor;
+    RefPtr<Cursor const> m_resize_vertically_cursor;
+    RefPtr<Cursor const> m_resize_diagonally_tlbr_cursor;
+    RefPtr<Cursor const> m_resize_diagonally_bltr_cursor;
+    RefPtr<Cursor const> m_resize_column_cursor;
+    RefPtr<Cursor const> m_resize_row_cursor;
+    RefPtr<Cursor const> m_i_beam_cursor;
+    RefPtr<Cursor const> m_disallowed_cursor;
+    RefPtr<Cursor const> m_move_cursor;
+    RefPtr<Cursor const> m_drag_cursor;
+    RefPtr<Cursor const> m_drag_copy_cursor;
+    RefPtr<Cursor const> m_wait_cursor;
+    RefPtr<Cursor const> m_crosshair_cursor;
+    RefPtr<Cursor const> m_eyedropper_cursor;
+    RefPtr<Cursor const> m_zoom_cursor;
     int m_cursor_highlight_radius { 0 };
     Gfx::Color m_cursor_highlight_color;
     bool m_cursor_highlight_enabled { false };
@@ -396,7 +405,7 @@ private:
     RefPtr<MultiScaleBitmaps> m_overlay_rect_shadow;
 
     // Setup 2 rows 1 column by default
-    NonnullOwnPtrVector<NonnullOwnPtrVector<WindowStack, default_window_stack_columns>, default_window_stack_rows> m_window_stacks;
+    Vector<NonnullOwnPtr<Vector<NonnullOwnPtr<WindowStack>, default_window_stack_columns>>, default_window_stack_rows> m_window_stacks;
     WindowStack* m_current_window_stack { nullptr };
 
     struct DoubleClickInfo {
@@ -429,14 +438,18 @@ private:
 
     bool is_considered_doubleclick(MouseEvent const&, DoubleClickInfo::ClickMetadata const&) const;
 
-    Gfx::IntPoint to_floating_cursor_position(Gfx::IntPoint const&) const;
+    Gfx::IntPoint to_floating_cursor_position(Gfx::IntPoint) const;
+
+    void show_tile_window_overlay(Window&, Screen const&, WindowTileType);
 
     DoubleClickInfo m_double_click_info;
     int m_double_click_speed { 0 };
     int m_max_distance_for_double_click { 4 };
     bool m_previous_event_was_super_keydown { false };
-    bool m_buttons_switched { false };
+    bool m_mouse_buttons_switched { false };
+    bool m_natural_scroll { false };
     bool m_theme_overridden { false };
+    Optional<ByteString> m_preferred_color_scheme { OptionalNone() };
 
     WeakPtr<Window> m_hovered_window;
     WeakPtr<Window> m_highlight_window;
@@ -444,7 +457,10 @@ private:
     WeakPtr<Window> m_automatic_cursor_tracking_window;
 
     OwnPtr<WindowGeometryOverlay> m_geometry_overlay;
+    OwnPtr<TileWindowOverlay> m_tile_window_overlay;
+    RefPtr<Animation> m_tile_window_overlay_animation;
     WeakPtr<Window> m_move_window;
+    WindowTileType m_move_window_suggested_tile { WindowTileType::None };
     Gfx::IntPoint m_move_origin;
     Gfx::IntPoint m_move_window_origin;
     Gfx::IntPoint m_move_window_cursor_position;
@@ -472,10 +488,10 @@ private:
 
     OwnPtr<DndOverlay> m_dnd_overlay;
     WeakPtr<ConnectionFromClient> m_dnd_client;
-    String m_dnd_text;
+    ByteString m_dnd_text;
     bool m_dnd_accepts_drag { false };
 
-    RefPtr<Core::MimeData> m_dnd_mime_data;
+    RefPtr<Core::MimeData const> m_dnd_mime_data;
 
     WindowStack* m_switching_to_window_stack { nullptr };
     Vector<WeakPtr<Window>, 4> m_carry_window_to_new_stack;
@@ -511,9 +527,11 @@ inline IterationDecision WindowManager::for_each_visible_window_from_back_to_fro
         return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::Notification>() == IterationDecision::Break)
         return IterationDecision::Break;
-    if (for_each_window.template operator()<WindowType::Tooltip>() == IterationDecision::Break)
+    if (for_each_window.template operator()<WindowType::Autocomplete>() == IterationDecision::Break)
         return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::Popup>() == IterationDecision::Break)
+        return IterationDecision::Break;
+    if (for_each_window.template operator()<WindowType::Tooltip>() == IterationDecision::Break)
         return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::Menu>() == IterationDecision::Break)
         return IterationDecision::Break;
@@ -546,6 +564,8 @@ inline IterationDecision WindowManager::for_each_visible_window_from_front_to_ba
         return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::Popup>() == IterationDecision::Break)
         return IterationDecision::Break;
+    if (for_each_window.template operator()<WindowType::Autocomplete>() == IterationDecision::Break)
+        return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::Notification>() == IterationDecision::Break)
         return IterationDecision::Break;
     if (for_each_window.template operator()<WindowType::AppletArea>() == IterationDecision::Break)
@@ -563,8 +583,8 @@ void WindowManager::for_each_window_manager(Callback callback)
     auto& connections = WMConnectionFromClient::s_connections;
 
     // FIXME: this isn't really ordered... does it need to be?
-    for (auto it = connections.begin(); it != connections.end(); ++it) {
-        if (callback(*it->value) == IterationDecision::Break)
+    for (auto [_, connection] : connections) {
+        if (callback(connection) == IterationDecision::Break)
             return;
     }
 }

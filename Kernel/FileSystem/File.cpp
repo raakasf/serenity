@@ -8,14 +8,14 @@
 #include <AK/Userspace.h>
 #include <Kernel/FileSystem/File.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
 File::File() = default;
 File::~File() = default;
 
-ErrorOr<NonnullLockRefPtr<OpenFileDescription>> File::open(int options)
+ErrorOr<NonnullRefPtr<OpenFileDescription>> File::open(int options)
 {
     auto description = OpenFileDescription::try_create(*this);
     if (!description.is_error()) {
@@ -35,7 +35,7 @@ ErrorOr<void> File::ioctl(OpenFileDescription&, unsigned, Userspace<void*>)
     return ENOTTY;
 }
 
-ErrorOr<NonnullLockRefPtr<Memory::VMObject>> File::vmobject_for_mmap(Process&, Memory::VirtualRange const&, u64&, bool)
+ErrorOr<File::VMObjectAndMemoryType> File::vmobject_and_memory_type_for_mmap(Process&, Memory::VirtualRange const&, u64&, bool)
 {
     return ENODEV;
 }

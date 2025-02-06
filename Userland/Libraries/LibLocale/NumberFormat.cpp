@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -22,7 +22,7 @@ Optional<NumberFormat> __attribute__((weak)) get_standard_number_system_format(S
 Vector<NumberFormat> __attribute__((weak)) get_compact_number_system_formats(StringView, StringView, CompactNumberFormatType) { return {}; }
 Vector<NumberFormat> __attribute__((weak)) get_unit_formats(StringView, StringView, Style) { return {}; }
 
-Optional<Span<u32 const>> __attribute__((weak)) get_digits_for_number_system(StringView)
+Optional<ReadonlySpan<u32>> __attribute__((weak)) get_digits_for_number_system(StringView)
 {
     // Fall back to "latn" digits when Unicode data generation is disabled.
     constexpr Array<u32, 10> digits { { 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39 } };
@@ -47,7 +47,7 @@ String replace_digits_for_number_system(StringView system, StringView number)
         }
     }
 
-    return builder.build();
+    return MUST(builder.to_string());
 }
 
 #if ENABLE_UNICODE_DATA
@@ -87,7 +87,7 @@ Optional<String> augment_currency_format_pattern([[maybe_unused]] StringView cur
             u32 first_currency_code_point = *utf8_currency_display.begin();
 
             if (!Unicode::code_point_has_general_category(first_currency_code_point, Unicode::GeneralCategory::Symbol))
-                currency_key_with_spacing = String::formatted("{}{}", spacing, currency_key);
+                currency_key_with_spacing = MUST(String::formatted("{}{}", spacing, currency_key));
         }
     } else {
         u32 last_pattern_code_point = last_code_point(base_pattern.substring_view(0, *number_index));
@@ -96,12 +96,12 @@ Optional<String> augment_currency_format_pattern([[maybe_unused]] StringView cur
             u32 last_currency_code_point = last_code_point(currency_display);
 
             if (!Unicode::code_point_has_general_category(last_currency_code_point, Unicode::GeneralCategory::Symbol))
-                currency_key_with_spacing = String::formatted("{}{}", currency_key, spacing);
+                currency_key_with_spacing = MUST(String::formatted("{}{}", currency_key, spacing));
         }
     }
 
     if (currency_key_with_spacing.has_value())
-        return base_pattern.replace(currency_key, *currency_key_with_spacing, ReplaceMode::FirstOnly);
+        return MUST(MUST(String::from_utf8(base_pattern)).replace(currency_key, *currency_key_with_spacing, ReplaceMode::FirstOnly));
 #endif
 
     return {};
@@ -112,7 +112,7 @@ Optional<String> augment_range_pattern([[maybe_unused]] StringView range_separat
 {
 #if ENABLE_UNICODE_DATA
     auto range_pattern_with_spacing = [&]() {
-        return String::formatted(" {} ", range_separator);
+        return MUST(String::formatted(" {} ", range_separator));
     };
 
     Utf8View utf8_range_separator { range_separator };

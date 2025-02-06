@@ -5,12 +5,12 @@
  */
 
 #include "FlameGraphView.h"
-#include "DevTools/Profiler/Profile.h"
-#include "LibGfx/Forward.h"
+#include "Profile.h"
 #include <AK/Function.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Widget.h>
 #include <LibGfx/Font/FontDatabase.h>
+#include <LibGfx/Forward.h>
 #include <LibGfx/Palette.h>
 
 namespace Profiler {
@@ -44,7 +44,7 @@ FlameGraphView::FlameGraphView(GUI::Model& model, int text_column, int width_col
     set_fill_with_background_color(true);
     set_background_role(Gfx::ColorRole::Base);
     set_scrollbars_enabled(true);
-    set_frame_thickness(0);
+    set_frame_style(Gfx::FrameStyle::NoFrame);
     set_should_hide_unnecessary_scrollbars(false);
     horizontal_scrollbar().set_visible(false);
 
@@ -89,7 +89,7 @@ void FlameGraphView::mousemove_event(GUI::MouseEvent& event)
     if (on_hover_change)
         on_hover_change();
 
-    String label = "";
+    String label;
     if (m_hovered_bar != nullptr && m_hovered_bar->index.is_valid()) {
         label = bar_label(*m_hovered_bar);
     }
@@ -178,9 +178,9 @@ void FlameGraphView::paint_event(GUI::PaintEvent& event)
 String FlameGraphView::bar_label(StackBar const& bar) const
 {
     auto label_index = bar.index.sibling_at_column(m_text_column);
-    String label = "All";
+    String label = "All"_string;
     if (label_index.is_valid()) {
-        label = m_model.data(label_index).to_string();
+        label = MUST(String::from_byte_string(m_model.data(label_index).to_byte_string()));
     }
     return label;
 }

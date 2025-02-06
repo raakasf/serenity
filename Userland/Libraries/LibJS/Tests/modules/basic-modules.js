@@ -206,6 +206,19 @@ describe("in- and exports", () => {
     test("exporting anonymous function", () => {
         expectModulePassed("./anon-func-decl-default-export.mjs");
     });
+
+    test.xfail(
+        "can have top level using declarations which trigger at the end of running a module",
+        () => {
+            expectModulePassed("./top-level-dispose.mjs");
+        }
+    );
+
+    test("can export default a RegExp", () => {
+        const result = expectModulePassed("./default-regexp-export.mjs");
+        expect(result.default).toBeInstanceOf(RegExp);
+        expect(result.default.toString()).toBe(/foo/.toString());
+    });
 });
 
 describe("loops", () => {
@@ -237,5 +250,11 @@ describe("failing modules cascade", () => {
             "./exporting-nothing-from-failing.mjs",
             failingModuleError
         );
+    });
+});
+
+describe("scoping in modules", () => {
+    test("functions within functions", () => {
+        expectModulePassed("./function-in-function.mjs");
     });
 });

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2022, Tim Flynn <trflynn89@serenityos.org>
+ * Copyright (c) 2021-2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,12 +19,20 @@ namespace JS::Intl {
 
 class NumberFormatBase : public Object {
     JS_OBJECT(NumberFormatBase, Object);
+    JS_DECLARE_ALLOCATOR(NumberFormatBase);
 
 public:
     enum class RoundingType {
         Invalid,
         SignificantDigits,
         FractionDigits,
+        MorePrecision,
+        LessPrecision,
+    };
+
+    enum class ComputedRoundingPriority {
+        Invalid,
+        Auto,
         MorePrecision,
         LessPrecision,
     };
@@ -87,6 +95,10 @@ public:
     StringView rounding_type_string() const;
     void set_rounding_type(RoundingType rounding_type) { m_rounding_type = rounding_type; }
 
+    ComputedRoundingPriority computed_rounding_priority() const { return m_computed_rounding_priority; }
+    StringView computed_rounding_priority_string() const;
+    void set_computed_rounding_priority(ComputedRoundingPriority computed_rounding_priority) { m_computed_rounding_priority = computed_rounding_priority; }
+
     RoundingMode rounding_mode() const { return m_rounding_mode; }
     StringView rounding_mode_string() const;
     void set_rounding_mode(StringView rounding_mode);
@@ -102,21 +114,23 @@ protected:
     explicit NumberFormatBase(Object& prototype);
 
 private:
-    String m_locale;                                                              // [[Locale]]
-    String m_data_locale;                                                         // [[DataLocale]]
-    int m_min_integer_digits { 0 };                                               // [[MinimumIntegerDigits]]
-    Optional<int> m_min_fraction_digits {};                                       // [[MinimumFractionDigits]]
-    Optional<int> m_max_fraction_digits {};                                       // [[MaximumFractionDigits]]
-    Optional<int> m_min_significant_digits {};                                    // [[MinimumSignificantDigits]]
-    Optional<int> m_max_significant_digits {};                                    // [[MaximumSignificantDigits]]
-    RoundingType m_rounding_type { RoundingType::Invalid };                       // [[RoundingType]]
-    RoundingMode m_rounding_mode { RoundingMode::Invalid };                       // [[RoundingMode]]
-    int m_rounding_increment { 1 };                                               // [[RoundingIncrement]]
-    TrailingZeroDisplay m_trailing_zero_display { TrailingZeroDisplay::Invalid }; // [[TrailingZeroDisplay]]
+    String m_locale;                                                                             // [[Locale]]
+    String m_data_locale;                                                                        // [[DataLocale]]
+    int m_min_integer_digits { 0 };                                                              // [[MinimumIntegerDigits]]
+    Optional<int> m_min_fraction_digits {};                                                      // [[MinimumFractionDigits]]
+    Optional<int> m_max_fraction_digits {};                                                      // [[MaximumFractionDigits]]
+    Optional<int> m_min_significant_digits {};                                                   // [[MinimumSignificantDigits]]
+    Optional<int> m_max_significant_digits {};                                                   // [[MaximumSignificantDigits]]
+    RoundingType m_rounding_type { RoundingType::Invalid };                                      // [[RoundingType]]
+    ComputedRoundingPriority m_computed_rounding_priority { ComputedRoundingPriority::Invalid }; // [[ComputedRoundingPriority]]
+    RoundingMode m_rounding_mode { RoundingMode::Invalid };                                      // [[RoundingMode]]
+    int m_rounding_increment { 1 };                                                              // [[RoundingIncrement]]
+    TrailingZeroDisplay m_trailing_zero_display { TrailingZeroDisplay::Invalid };                // [[TrailingZeroDisplay]]
 };
 
 class NumberFormat final : public NumberFormatBase {
     JS_OBJECT(NumberFormat, NumberFormatBase);
+    JS_DECLARE_ALLOCATOR(NumberFormat);
 
 public:
     enum class Style {
@@ -247,11 +261,11 @@ private:
     Optional<CurrencySign> m_currency_sign {};           // [[CurrencySign]]
     Optional<String> m_unit {};                          // [[Unit]]
     Optional<::Locale::Style> m_unit_display {};         // [[UnitDisplay]]
-    UseGrouping m_use_grouping { false };                // [[UseGrouping]]
+    UseGrouping m_use_grouping { UseGrouping::False };   // [[UseGrouping]]
     Notation m_notation { Notation::Invalid };           // [[Notation]]
     Optional<CompactDisplay> m_compact_display {};       // [[CompactDisplay]]
     SignDisplay m_sign_display { SignDisplay::Invalid }; // [[SignDisplay]]
-    NativeFunction* m_bound_format { nullptr };          // [[BoundFormat]]
+    GCPtr<NativeFunction> m_bound_format;                // [[BoundFormat]]
 
     // Non-standard. Stores the resolved currency display string based on [[Locale]], [[Currency]], and [[CurrencyDisplay]].
     Optional<StringView> m_resolved_currency_display;
@@ -280,20 +294,20 @@ FormatResult format_numeric_to_string(NumberFormatBase const& intl_object, Mathe
 Vector<PatternPartition> partition_number_pattern(VM&, NumberFormat&, MathematicalValue number);
 Vector<PatternPartition> partition_notation_sub_pattern(NumberFormat&, MathematicalValue const& number, String formatted_string, int exponent);
 String format_numeric(VM&, NumberFormat&, MathematicalValue number);
-Array* format_numeric_to_parts(VM&, NumberFormat&, MathematicalValue number);
-RawFormatResult to_raw_precision(MathematicalValue const& number, int min_precision, int max_precision, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
-RawFormatResult to_raw_fixed(MathematicalValue const& number, int min_fraction, int max_fraction, int rounding_increment, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
+NonnullGCPtr<Array> format_numeric_to_parts(VM&, NumberFormat&, MathematicalValue number);
+RawFormatResult to_raw_precision(MathematicalValue const& number, int min_precision, int max_precision, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
+RawFormatResult to_raw_fixed(MathematicalValue const& number, int min_fraction, int max_fraction, int rounding_increment, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 Optional<Variant<StringView, String>> get_number_format_pattern(VM&, NumberFormat&, MathematicalValue const& number, ::Locale::NumberFormat& found_pattern);
 Optional<StringView> get_notation_sub_pattern(NumberFormat&, int exponent);
 int compute_exponent(NumberFormat&, MathematicalValue number);
 int compute_exponent_for_magnitude(NumberFormat&, int magnitude);
 ThrowCompletionOr<MathematicalValue> to_intl_mathematical_value(VM&, Value value);
 NumberFormat::UnsignedRoundingMode get_unsigned_rounding_mode(NumberFormat::RoundingMode, bool is_negative);
-RoundingDecision apply_unsigned_rounding_mode(MathematicalValue const& x, MathematicalValue const& r1, MathematicalValue const& r2, Optional<NumberFormat::UnsignedRoundingMode> const& unsigned_rounding_mode);
+RoundingDecision apply_unsigned_rounding_mode(MathematicalValue const& x, MathematicalValue const& r1, MathematicalValue const& r2, NumberFormat::UnsignedRoundingMode unsigned_rounding_mode);
 ThrowCompletionOr<Vector<PatternPartitionWithSource>> partition_number_range_pattern(VM&, NumberFormat&, MathematicalValue start, MathematicalValue end);
 Vector<PatternPartitionWithSource> format_approximately(NumberFormat&, Vector<PatternPartitionWithSource> result);
 Vector<PatternPartitionWithSource> collapse_number_range(Vector<PatternPartitionWithSource> result);
 ThrowCompletionOr<String> format_numeric_range(VM&, NumberFormat&, MathematicalValue start, MathematicalValue end);
-ThrowCompletionOr<Array*> format_numeric_range_to_parts(VM&, NumberFormat&, MathematicalValue start, MathematicalValue end);
+ThrowCompletionOr<NonnullGCPtr<Array>> format_numeric_range_to_parts(VM&, NumberFormat&, MathematicalValue start, MathematicalValue end);
 
 }

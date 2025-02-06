@@ -12,19 +12,10 @@
 
 namespace Partition {
 
-#ifdef KERNEL
-PartitionTable::PartitionTable(Kernel::StorageDevice const& device)
-    : m_device(device)
-    , m_block_size(device.block_size())
+PartitionTable::PartitionTable(PartitionableDevice&& device)
+    : m_device(move(device))
 {
 }
-#else
-PartitionTable::PartitionTable(NonnullRefPtr<Core::File> device_file)
-    : m_device_file(device_file)
-{
-    VERIFY(ioctl(m_device_file->leak_fd(), STORAGE_DEVICE_GET_BLOCK_SIZE, &m_block_size) >= 0);
-}
-#endif
 
 Optional<DiskPartitionMetadata> PartitionTable::partition(unsigned index) const
 {
